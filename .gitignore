@@ -1,0 +1,13 @@
+data/
+__pycache__/
+.env
+*.pyc
+.venv/
+frontend/node_modules/
+data/test-auto.secret
+dist/
+build/
+.venv-build/
+packaging/windows/ffmpeg/
+.pytest_cache/
+.claude/
