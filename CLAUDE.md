@@ -103,6 +103,11 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 E-mail à configurer dans Paramètres (compte d'envoi + destinataire) ; essayer l'installateur sur un vrai poste
 Windows ; essai réel d'une caméra débranchée ; Hikvision (caméras et enregistrement) ;
 compte NVR en lecture seule au lieu de l'admin ; NTP du NVR désactivé (horloge en retard).
+**En attente (décision de l'utilisateur, 31/10/2026) : licence par pharmacie, 50 €/an.** Piste proposée : fichier
+`licence.camsup` signé Ed25519 (clé privée chez le vendeur seulement, clé publique dans CamSup) : pharmacie, n°,
+date de fin, éventuellement identifiant du PC (choix pas encore fait) ; import dans Paramètres ; à l'expiration
+ne jamais couper alertes ni extraits (bandeau 30 j avant, grâce 30 j, puis configuration bloquée) ; outil
+`creer-licence` côté vendeur. Ne rien coder avant le feu vert.
 Windows 1.1 (serveur sous SYSTEM, données réservées) : **rien n'est vérifié sur un vrai Windows** (droits icacls,
 tâche planifiée, mise à jour depuis la 1.0, fenêtre d'alerte par session) ; sous Wine, le Planificateur de tâches et
 PowerShell manquent (l'installateur affichera l'échec de `installer-tache.ps1`).
