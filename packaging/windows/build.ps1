@@ -1,9 +1,9 @@
 ﻿# Fabrication de l'installateur Windows de CamSup, sur un PC Windows 10/11 64 bits :
-#   powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Version 1.0.0]
+#   powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 [-Version 1.1.0]
 # Prérequis : Python 3.12 (python.org, « Add to PATH ») et Inno Setup 6 (jrsoftware.org).
 # Node.js 20+ seulement si l'interface n'est pas déjà compilée (app\static\app absent) ou après l'avoir modifiée.
 # Résultat : dist\CamSup-Installation-<version>.exe (et dist\CamSup\, le programme seul).
-param([string]$Version = "1.0.0")
+param([string]$Version = "1.1.0")
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $Root

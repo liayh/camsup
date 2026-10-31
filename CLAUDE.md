@@ -61,8 +61,10 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 - Ajout d'un NVR (`main.py` `/nvr/*`, `nvrwatch.discover`) : identifiants saisis une fois, liste des canaux non
   « Empty » (`ChannelTitle`, noms génériques → « Caméra N »), ajout groupé sans doublon, « chercher de nouvelles
   caméras » avec les identifiants gardés, identifiants communs changés pour tout le NVR (vérifiés avant).
-- `popup.py` : processus séparé lancé par `run.py` (Tkinter) avec l'identifiant du démarrage (`settings.instance`) :
-  une fenêtre d'un démarrage précédent se ferme seule. Lit la base en lecture seule toutes les 5 s ; `Reminder`
+- `popup.py` : processus séparé (Tkinter), lancé par `run.py` en dev avec l'identifiant du démarrage
+  (`settings.instance` : une fenêtre d'un démarrage précédent se ferme seule), ou `CamSup.exe --popup` à chaque
+  ouverture de session Windows (une par session, mutex). Lit `GET /api/fenetre` (127.0.0.1 seulement, sans compte,
+  `alerting.popup_state()`) toutes les 5 s, jamais la base ; serveur injoignable 5 min → « surveillance arrêtée » ; `Reminder`
   = logique de rappel (4 h, ou nouveau problème). Heartbeat muet 5 min → « surveillance arrêtée » ; `"arret"` écrit
   à l'arrêt normal → la fenêtre se ferme (uvicorn tue le processus après SIGTERM : le `finally` de `run.main` ne s'exécute pas).
   Essai sans écran : `xvfb-run` + capture `ffmpeg -f x11grab`.
@@ -76,10 +78,13 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 - Interface (`frontend/`, compilée dans `app/static/app`, thème clair) : État et alertes (alertes + disques : secteurs
   réalloués / en attente / illisibles / CRC avec évolution, `components/DiskHealth`), Voir la vidéo, Enregistreurs et
   caméras (un module : disques + caméras par NVR, assistant d'ajout), Sites, Utilisateurs, Paramètres (compte, e-mail).
-- Windows (`packaging/windows`) : `camsup_win.py` (point d'entrée ; `--popup` = fenêtre d'alerte), `camsup.spec`
-  (PyInstaller, dossier), `camsup.iss` (Inno Setup : Program Files, `%PROGRAMDATA%\CamSup`, démarrage à l'ouverture de
-  session, mot de passe admin demandé (ou `/MOTDEPASSE=` en silencieux) puis retiré du .env par
-  `config.forget_admin_password`), `build.ps1` (sur Windows), `build-docker.sh` (depuis Linux : Wine, images
+- Windows (`packaging/windows`, 1.1) : `camsup_win.py` (point d'entrée : `--serveur` = superviseur qui relance
+  `--serveur-processus` ; `--popup` = fenêtre d'alerte ; sans argument = ouvre le navigateur), `camsup.spec`
+  (PyInstaller, dossier), `installer-tache.ps1` (droits : `data` système + administrateurs seulement, racine lisible
+  par Utilisateurs, propriétaire = Administrateurs ; tâche planifiée « CamSup » sous SYSTEM au démarrage du PC, sans
+  limite de durée ; `-Desinstaller`), `camsup.iss` (Inno Setup : Program Files, `%PROGRAMDATA%\CamSup`, fenêtre
+  d'alerte à l'ouverture de session, mot de passe admin demandé (ou `/MOTDEPASSE=` en silencieux) écrit dans
+  `data\installation.env` puis effacé par `config.forget_admin_password` ; mot de passe généré → `data\mot-de-passe-admin.txt`), `build.ps1` (sur Windows), `build-docker.sh` (depuis Linux : Wine, images
   tobix/pywine:3.12 et amake/innosetup ; Inno sous Wine a besoin d'un écran virtuel seulement pour *exécuter* le setup).
   `config.FROZEN` : 127.0.0.1, HTTP, ffmpeg à côté de l'exe, journaux dans `data/logs`. Installateur vérifié
   sous Wine (installation silencieuse, premier démarrage) ; pas encore sur un vrai Windows.
@@ -98,7 +103,6 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 E-mail à configurer dans Paramètres (compte d'envoi + destinataire) ; essayer l'installateur sur un vrai poste
 Windows ; essai réel d'une caméra débranchée ; Hikvision (caméras et enregistrement) ;
 compte NVR en lecture seule au lieu de l'admin ; NTP du NVR désactivé (horloge en retard).
-**Risque connu (Windows)** : `%PROGRAMDATA%\CamSup` est en `users-modify` (CamSup tourne dans la session de
-l'utilisateur) : tout compte Windows du poste peut lire `secret.key` + `camsup.db` (mots de passe des NVR) et modifier
-la base (comptes). Correction de fond : service Windows (compte système, données réservées aux administrateurs),
-fenêtre d'alerte qui interroge l'API au lieu de lire la base.
+Windows 1.1 (serveur sous SYSTEM, données réservées) : **rien n'est vérifié sur un vrai Windows** (droits icacls,
+tâche planifiée, mise à jour depuis la 1.0, fenêtre d'alerte par session) ; sous Wine, le Planificateur de tâches et
+PowerShell manquent (l'installateur affichera l'échec de `installer-tache.ps1`).

@@ -33,10 +33,15 @@ async def lifespan(_: FastAPI):
             # jamais dans le journal (fichier lisible sur le poste) : seulement sur la console qui a lancé CamSup
             log.warning("ADMIN_PASSWORD non défini : mot de passe généré pour '%s', affiché sur la console",
                         config.ADMIN_USER)
-            if not config.FROZEN and sys.__stderr__:
+            if config.FROZEN:          # service sans console : fichier du dossier de données (administrateurs)
+                f = config.DATA_DIR / "mot-de-passe-admin.txt"
+                f.write_text(f"{config.ADMIN_USER} : {security.ADMIN_PASSWORD}\r\nÀ changer puis effacer ce fichier.\r\n",
+                             encoding="utf-8")
+                log.warning("Mot de passe généré dans %s", f)
+            elif sys.__stderr__:
                 print(f"Mot de passe de '{config.ADMIN_USER}' : {security.ADMIN_PASSWORD}", file=sys.__stderr__)
-        elif config.FROZEN:
-            config.forget_admin_password()     # saisi à l'installation : inutile (et à ne pas laisser) une fois le compte créé
+    if config.FROZEN:
+        config.forget_admin_password()         # saisi à l'installation : inutile (et à ne pas laisser) une fois le compte créé
     monitor.start()
     yield
     monitor.stop()
@@ -605,6 +610,19 @@ def notify_test(request: Request):
     mail._record(True)
     accounts.audit_req(request, "email.test")
     return {"ok": True}
+
+
+LOOPBACK = {"127.0.0.1", "::1"}
+
+
+@app.get("/api/fenetre")
+def popup_state(request: Request):
+    """Fenêtre d'alerte (`app.popup`, une par session Windows) : depuis ce PC seulement, sans compte.
+
+    Elle ne lit plus la base elle-même : les données sont réservées au compte système qui fait tourner le serveur."""
+    if accounts.client_ip(request) not in LOOPBACK:
+        raise HTTPException(404)
+    return alerting.popup_state()
 
 
 @app.get("/api/health")

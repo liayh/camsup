@@ -76,3 +76,45 @@ def test_apercus_limites(env, monkeypatch):
         preview.request(cam, now + i * 60)
     with pytest.raises(export.ExportError):
         preview.request(cam, now + 3600)
+
+
+def test_fenetre_alerte_depuis_ce_pc_seulement(env, monkeypatch):
+    """La fenêtre d'alerte lit l'état sur le serveur local ; depuis le réseau, la route n'existe pas."""
+    from app import alerting, config, main
+    db.x("INSERT INTO alerts(key,camera_id,kind,message,opened_ts) VALUES('rec:1',?,'rec','Enregistrement arrêté',1)",
+         (env["cam_a"],))
+    db.x("INSERT INTO alerts(key,camera_id,kind,message,opened_ts) VALUES('x',NULL,'autre','pas affichée',1)")
+    c = client()
+    assert c.get("/api/fenetre").status_code == 404           # client de test = adresse distante
+    monkeypatch.setattr(main, "LOOPBACK", {"testclient"})
+    data = c.get("/api/fenetre").json()
+    assert [a["key"] for a in data["alerts"]] == ["rec:1"] and set(data) == {"alerts", "heartbeat", "instance", "email"}
+    assert data == alerting.popup_state()
+
+
+def test_fenetre_serveur_injoignable(monkeypatch):
+    import requests
+    from app import popup
+    monkeypatch.setattr(popup.config, "PORT", 1)               # rien n'écoute
+    with pytest.raises(requests.RequestException):
+        popup.fetch(timeout=1)
+
+
+def test_mot_de_passe_installation_efface(tmp_path, monkeypatch):
+    from app import config
+    f = tmp_path / "installation.env"
+    f.write_text("ADMIN_PASSWORD=secret-installation\n")
+    env_file = tmp_path / "camsup.env"
+    env_file.write_text("PORT=8080\nADMIN_PASSWORD=ancien\n")
+    monkeypatch.setattr(config, "INSTALL_FILE", f)
+    monkeypatch.setattr(config, "ENV_FILE", env_file)
+    config.forget_admin_password()
+    assert not f.exists() and env_file.read_text() == "PORT=8080\n"
+
+
+def test_fichier_reglages_illisible(tmp_path):
+    from app import config
+    config._load_env_file(tmp_path / "absent.env")             # pas d'erreur
+    d = tmp_path / "dossier.env"
+    d.mkdir()
+    config._load_env_file(d)                                    # illisible (ici un dossier) : ignoré

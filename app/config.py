@@ -2,8 +2,8 @@ r"""Configuration CamSup — variables d'environnement, ou fichier de réglages 
 Une variable déjà définie dans l'environnement l'emporte sur le fichier.
 
 - développement : `.env` à la racine du projet, données dans `./data` ;
-- programme Windows (PyInstaller, `FROZEN`) : `%PROGRAMDATA%\CamSup\camsup.env` et `%PROGRAMDATA%\CamSup\data` (communs
-  à tous les comptes du poste), interface sur ce poste seulement (127.0.0.1, HTTP : `localhost` est un contexte sûr
+- programme Windows (PyInstaller, `FROZEN`) : `%PROGRAMDATA%\CamSup\camsup.env` (lisible par tous) et
+  `%PROGRAMDATA%\CamSup\data` (système et administrateurs seulement : le serveur tourne sous le compte système), interface sur ce poste seulement (127.0.0.1, HTTP : `localhost` est un contexte sûr
   pour le navigateur, sans avertissement de certificat), ffmpeg livré à côté de `CamSup.exe`.
 """
 import os
@@ -12,9 +12,11 @@ from pathlib import Path
 
 
 def _load_env_file(path: Path) -> None:
-    if not path.is_file():
+    try:
+        text = path.read_text(encoding="utf-8-sig")                     # « -sig » : fichier écrit avec BOM
+    except OSError:                    # absent, ou réservé aux administrateurs (fenêtre d'alerte d'un utilisateur)
         return
-    for line in path.read_text(encoding="utf-8-sig").splitlines():     # « -sig » : fichier écrit avec BOM
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -31,7 +33,9 @@ _load_env_file(ENV_FILE)
 
 
 def forget_admin_password() -> None:
-    """Après la création du compte intégrateur : retire ADMIN_PASSWORD (saisi à l'installation) du fichier de réglages."""
+    """Après la création du compte intégrateur : efface le mot de passe saisi à l'installation (`INSTALL_FILE`) et
+    retire ADMIN_PASSWORD du fichier de réglages (installations d'avant la 1.1)."""
+    INSTALL_FILE.unlink(missing_ok=True)
     if ENV_FILE.is_file():
         lines = ENV_FILE.read_text(encoding="utf-8-sig").splitlines()
         kept = [x for x in lines if not x.strip().startswith("ADMIN_PASSWORD")]
@@ -42,6 +46,10 @@ def forget_admin_password() -> None:
 DATA_DIR = Path(os.getenv("DATA_DIR", HOME / "data" if FROZEN else "./data")).resolve()
 LOG_DIR = DATA_DIR / "logs"
 DB_PATH = DATA_DIR / "camsup.db"
+# programme Windows : mot de passe admin saisi à l'installation, dans data/ (réservé au système et aux administrateurs)
+INSTALL_FILE = DATA_DIR / "installation.env"
+if FROZEN:
+    _load_env_file(INSTALL_FILE)
 
 # Surveillance
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "5"))                   # tour de la boucle de surveillance
@@ -89,4 +97,7 @@ SMTP_FROM = os.getenv("SMTP_FROM", "camsup@localhost")
 ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "")
 
 for d in (DATA_DIR, LOG_DIR):
-    d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:                    # fenêtre d'alerte d'un utilisateur : dossier réservé, elle n'en a pas besoin
+        pass

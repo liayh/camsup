@@ -34,6 +34,14 @@ def raise_alert(key: str, camera_id: int | None, kind: str, message: str) -> Non
     notify(f"🔴 {message}", kind in config.EMAIL_KINDS)
 
 
+def popup_state() -> dict:
+    """Ce qu'affiche la fenêtre d'alerte du poste (`app.popup`) : alertes ouvertes, battement de cœur, e-mail."""
+    kinds = config.POPUP_KINDS
+    return {"alerts": db.q(f"SELECT key, kind, message, opened_ts FROM alerts WHERE closed_ts IS NULL AND kind IN "
+                           f"({','.join('?' * len(kinds))}) ORDER BY opened_ts", kinds),
+            "heartbeat": db.setting("heartbeat"), "instance": db.setting("instance"), "email": mail.configured()}
+
+
 def clear_alert(key: str) -> None:
     row = db.one("SELECT id, kind, message FROM alerts WHERE key=? AND closed_ts IS NULL", (key,))
     if not row:

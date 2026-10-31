@@ -4,7 +4,7 @@
 # Images publiques utilisées : tobix/pywine:3.12 (Python Windows sous Wine, PyInstaller) et amake/innosetup (Inno Setup 6).
 # ffmpeg : build « essentials » de gyan.dev, empreinte SHA-256 vérifiée. Interface : compilée avant (npm run build).
 set -e
-VERSION=${1:-1.0.0}
+VERSION=${1:-1.1.0}
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=$(mktemp -d)
 trap 'docker run --rm -v "$WORK":/w alpine:3 rm -rf /w/src >/dev/null 2>&1; rm -rf "$WORK"' EXIT

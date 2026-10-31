@@ -1,19 +1,26 @@
-"""Fenêtre d'alerte sur le poste (pharmacie) : `python -m app.popup`, lancée par `app.run` si POPUPS=1.
+"""Fenêtre d'alerte sur le poste (pharmacie) : `python -m app.popup`, lancée par `app.run` si POPUPS=1 (développement),
+ou `CamSup.exe --popup` à l'ouverture de chaque session Windows (le serveur tourne alors sous le compte système).
 
-Processus séparé qui lit la base en lecture seule toutes les 5 s :
+Processus séparé qui interroge le serveur de ce PC toutes les 5 s (`GET /api/fenetre`, réservé à 127.0.0.1) ; il ne
+lit pas la base, réservée au compte qui fait tourner le serveur :
 - alertes ouvertes de type `config.POPUP_KINDS` → fenêtre au premier plan avec la liste des problèmes ;
 - fermée par l'utilisateur → rouverte après `POPUP_REMIND_HOURS` h, ou tout de suite si un nouveau problème apparaît ;
 - tout est rétabli → court message « rétabli » (fermé seul après 1 min) ;
-- serveur muet depuis 5 min (battement de cœur `settings.heartbeat`) → fenêtre « surveillance arrêtée ».
+- serveur injoignable, ou surveillance muette (battement de cœur), depuis 5 min → fenêtre « surveillance arrêtée ».
 Tkinter : fourni avec Python sous Windows, aucune dépendance en plus.
 """
 import logging
-import sqlite3
+import os
 import sys
 import time
 from dataclasses import dataclass, field
 
-from . import config, mail
+import requests
+import urllib3
+
+from . import config
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)     # développement : certificat auto-signé local
 
 log = logging.getLogger("popup")
 POLL_MS = 5_000                            # caméra perdue : relevée en ≤ 20 s, affichée en ≤ 25 s
@@ -47,37 +54,30 @@ class Reminder:
         self.dismissed_keys, self.dismissed_at = set(), None
 
 
-def read_state(now: float, check_heartbeat: bool = True, instance: str = "") -> list[dict]:
+def stopped_row(since: float) -> dict:
+    # type à part : aucun e-mail ne peut partir d'un serveur arrêté, la fenêtre ne doit pas dire le contraire
+    return {"key": STOPPED_KEY, "kind": "surveillance", "opened_ts": int(since),
+            "message": "La surveillance CamSup ne fonctionne plus : prévenez votre installateur"}
+
+
+def fetch(timeout: float = 5) -> dict:
+    """État lu sur le serveur de ce PC ; `requests.RequestException` s'il ne répond pas."""
+    url = f"{'https' if config.HTTPS else 'http'}://127.0.0.1:{config.PORT}/api/fenetre"
+    r = requests.get(url, timeout=timeout, verify=False)       # 127.0.0.1 : certificat auto-signé en développement
+    r.raise_for_status()
+    return r.json()
+
+
+def read_state(data: dict, now: float, check_heartbeat: bool = True, instance: str = "") -> list[dict]:
     """Problèmes à afficher : alertes ouvertes, ou l'arrêt de la surveillance elle-même.
-    `instance` : démarrage du serveur qui a lancé cette fenêtre ; un autre en base = fenêtre périmée."""
-    con = sqlite3.connect(f"file:{config.DB_PATH}?mode=ro", uri=True, timeout=5)
-    con.row_factory = sqlite3.Row
-    try:
-        kinds = config.POPUP_KINDS + ("offline",)
-        rows = [dict(r) for r in con.execute(
-            f"SELECT key, kind, message, opened_ts FROM alerts WHERE closed_ts IS NULL AND kind IN "
-            f"({','.join('?' * len(kinds))}) ORDER BY opened_ts", kinds)]
-        hb = con.execute("SELECT value FROM settings WHERE key='heartbeat'").fetchone()
-        owner = con.execute("SELECT value FROM settings WHERE key='instance'").fetchone()
-    finally:
-        con.close()
-    if (hb and hb[0] == CLEAN_STOP) or (instance and owner and owner[0] != instance):
+    `instance` : démarrage du serveur qui a lancé cette fenêtre ; un autre = fenêtre périmée."""
+    hb, owner = data.get("heartbeat") or "", data.get("instance") or ""
+    if hb == CLEAN_STOP or (instance and owner and owner != instance):
         raise ServerStopped
-    if check_heartbeat and hb and now - float(hb[0]) > HEARTBEAT_STALE:
-        # type à part : aucun e-mail ne peut partir d'un serveur arrêté, la fenêtre ne doit pas dire le contraire
-        rows.insert(0, {"key": STOPPED_KEY, "kind": "surveillance", "opened_ts": int(float(hb[0])),
-                        "message": "La surveillance CamSup ne fonctionne plus : prévenez votre installateur"})
+    rows = list(data.get("alerts") or [])
+    if check_heartbeat and hb and now - float(hb) > HEARTBEAT_STALE:
+        rows.insert(0, stopped_row(float(hb)))                # serveur en vie, boucle de surveillance arrêtée
     return rows
-
-
-def email_on() -> bool:
-    """L'installateur est-il prévenu par e-mail ? (réglages de Paramètres, sinon fichier .env)"""
-    con = sqlite3.connect(f"file:{config.DB_PATH}?mode=ro", uri=True, timeout=5)
-    try:
-        row = con.execute("SELECT value FROM settings WHERE key='email'").fetchone()
-    finally:
-        con.close()
-    return mail.configured(mail.load(row[0] if row else None))
 
 
 def _center(w) -> None:
@@ -99,22 +99,27 @@ class App:
         self.rem = Reminder(config.POPUP_REMIND_HOURS * 3600)
         self.shown_keys: set = set()
         self.had_alerts = False
-        self.started = time.time()
+        self.started = self.last_ok = time.time()            # 5 min laissées au serveur pour démarrer
+        self.email = False
         self.root.after(2000, self.tick)
 
     def tick(self) -> None:
         now = time.time()
         try:
-            # au démarrage, le battement de cœur en base date de l'arrêt précédent : on laisse 5 min au serveur
-            rows = read_state(now, now - self.started > HEARTBEAT_STALE, self.instance)
+            data = fetch()
+            self.last_ok, self.email = now, bool(data.get("email"))
+            # au démarrage, le battement de cœur date de l'arrêt précédent : on laisse 5 min au serveur
+            rows = read_state(data, now, now - self.started > HEARTBEAT_STALE, self.instance)
         except ServerStopped:
             log.info("Serveur arrêté ou redémarré : fin de cette fenêtre d'alerte")
             self.root.quit()
             return
-        except sqlite3.Error as e:            # base momentanément verrouillée : on réessaie au tour suivant
-            log.warning("Lecture de la base impossible : %s", e)
-            self.root.after(POLL_MS, self.tick)
-            return
+        except (requests.RequestException, ValueError) as e:    # serveur injoignable (arrêté, en redémarrage)
+            if now - self.last_ok <= HEARTBEAT_STALE:
+                log.warning("Serveur CamSup injoignable : %s", type(e).__name__)
+                self.root.after(POLL_MS, self.tick)
+                return
+            rows = [stopped_row(self.last_ok)]
         keys = {r["key"] for r in rows}
         if rows:
             self.had_alerts = True
@@ -162,7 +167,7 @@ class App:
             since = time.strftime("%d/%m %H:%M", time.localtime(r["opened_ts"]))
             self.tk.Label(self.body, text=f"•  {r['message']}   (depuis le {since})", anchor="w", justify="left",
                           wraplength=520, font=("Segoe UI", 11)).pack(fill="x", pady=2)
-        emailed = any(r["kind"] in config.EMAIL_KINDS for r in rows) and email_on()
+        emailed = any(r["kind"] in config.EMAIL_KINDS for r in rows) and self.email
         self.foot.config(text=("Votre installateur a été prévenu par e-mail. " if emailed else "")
                          + "Cette fenêtre reviendra tant que le problème n'est pas résolu.")
         self.shown_keys = {r["key"] for r in rows}
@@ -191,8 +196,23 @@ class App:
         w.after(60_000, lambda: w.winfo_exists() and w.destroy())
 
 
+_mutex = None
+
+
+def single_instance() -> bool:
+    """Une seule fenêtre d'alerte par session Windows (démarrage de session + lancement après installation)."""
+    global _mutex
+    if os.name != "nt":
+        return True
+    import ctypes
+    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\CamSup-fenetre-alerte")
+    return ctypes.windll.kernel32.GetLastError() != 183       # ERROR_ALREADY_EXISTS
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s popup %(levelname)s %(message)s")
+    if not single_instance():
+        return
     App(sys.argv[1] if len(sys.argv) > 1 else "").root.mainloop()
 
 

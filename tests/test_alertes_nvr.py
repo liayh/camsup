@@ -161,19 +161,21 @@ def test_rappel_de_la_fenetre():
 def test_fenetre_serveur_arrete(env):
     from app import popup
     import time
+    from app import alerting
     db.set_setting("heartbeat", str(int(time.time()) - 900))
-    rows = popup.read_state(time.time())
+    rows = popup.read_state(alerting.popup_state(), time.time())
     assert rows[0]["key"] == popup.STOPPED_KEY
     assert rows[0]["kind"] not in config.EMAIL_KINDS         # « installateur prévenu » ne doit pas s'afficher
-    assert popup.read_state(time.time(), check_heartbeat=False) == []
+    assert popup.read_state(alerting.popup_state(), time.time(), check_heartbeat=False) == []
 
 
 def test_fenetre_arret_normal(env):
     from app import popup
     import time
+    from app import alerting
     db.set_setting("heartbeat", popup.CLEAN_STOP)
     with pytest.raises(popup.ServerStopped):
-        popup.read_state(time.time())
+        popup.read_state(alerting.popup_state(), time.time())
 
 
 def test_fichier_env(tmp_path, monkeypatch):
@@ -254,10 +256,11 @@ def test_fenetre_perimee_apres_redemarrage(env):
     from app import popup
     import time
     db.set_setting("heartbeat", str(int(time.time())))
+    from app import alerting
     db.set_setting("instance", "nouveau")
-    assert popup.read_state(time.time(), instance="nouveau") == []
+    assert popup.read_state(alerting.popup_state(), time.time(), instance="nouveau") == []
     with pytest.raises(popup.ServerStopped):
-        popup.read_state(time.time(), instance="ancien")
+        popup.read_state(alerting.popup_state(), time.time(), instance="ancien")
 
 
 def test_retour_du_nvr_delai_de_grace(env, monkeypatch):

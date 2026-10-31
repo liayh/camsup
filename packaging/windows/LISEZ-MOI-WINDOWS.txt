@@ -11,11 +11,12 @@ CamSup - fabriquer puis installer sur un PC Windows 10/11 (64 bits)
      cd CHEMIN\VERS\camsup
      powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
    Durée : quelques minutes (téléchargement de PyInstaller et de ffmpeg, connexion Internet nécessaire).
-   Résultat : dist\CamSup-Installation-1.0.0.exe
+   Résultat : dist\CamSup-Installation-1.1.0.exe
 
-3. Installer : double-clic sur dist\CamSup-Installation-1.0.0.exe (droits administrateur).
+3. Installer : double-clic sur dist\CamSup-Installation-1.1.0.exe (droits administrateur).
    - Choisir le mot de passe du compte « admin » (10 caractères au moins, sans # ni guillemets).
-   - Cocher « Démarrer CamSup maintenant ».
+   - CamSup tourne ensuite en permanence sous le compte système (tâche planifiée « CamSup », lancée au démarrage du
+     PC, même sans session ouverte) ; la fenêtre d'alerte s'ouvre avec chaque session Windows.
 
 4. Utiliser : icône « CamSup » (menu Démarrer ou bureau) -> le navigateur ouvre http://localhost:8080
    - Se connecter : admin + le mot de passe choisi.
@@ -23,7 +24,13 @@ CamSup - fabriquer puis installer sur un PC Windows 10/11 (64 bits)
      être sur le même réseau), utilisateur et mot de passe du NVR > « Se connecter au NVR » > « Toutes » > Ajouter.
    - Paramètres > e-mail de l'installateur.
 
-Le logiciel démarre vide (aucune pharmacie, aucune caméra). Ses données sont dans C:\ProgramData\CamSup
-(à sauvegarder : C:\ProgramData\CamSup\data\secret.key). Journaux : C:\ProgramData\CamSup\data\logs.
+Le logiciel démarre vide (aucune pharmacie, aucune caméra). Ses données sont dans C:\ProgramData\CamSup\data,
+réservé au système et aux administrateurs : un compte Windows ordinaire du poste ne peut ni lire la base (mots de
+passe des NVR chiffrés, clé de chiffrement) ni la modifier. À sauvegarder (en administrateur) :
+C:\ProgramData\CamSup\data\secret.key. Journaux : C:\ProgramData\CamSup\data\logs (serveur) et
+%LOCALAPPDATA%\CamSup\logs (fenêtre d'alerte de chaque utilisateur).
+Réglages (port, etc.) : C:\ProgramData\CamSup\camsup.env, lisible par tous : n'y mettre aucun mot de passe
+(l'e-mail se règle dans Paramètres, mot de passe chiffré dans la base).
+Arrêter / redémarrer le serveur : Planificateur de tâches > « CamSup » (ou redémarrer le PC).
 Désinstaller : Paramètres Windows > Applications > CamSup (les données de C:\ProgramData\CamSup restent ;
 les supprimer à la main pour repartir de zéro).
