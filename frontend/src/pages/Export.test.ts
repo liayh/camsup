@@ -43,3 +43,30 @@ describe("nom du fichier enregistré", () => {
     expect(fileName("Pharmacie de l'Église", ts)).toBe("Video_Pharmacie_de_l__glise_2026-10-30_14h05.zip");
   });
 });
+
+describe("périodes enregistrées", () => {
+  it("fusionne les caméras et trouve le premier instant enregistré", async () => {
+    const { union, firstRecorded } = await import("./Export");
+    const rec = { 1: [[100, 200], [500, 600]], 2: [[150, 300]], 3: [[900, 950]] };
+    expect(union(rec, [1, 2])).toEqual([[100, 300], [500, 600]]);
+    const u = union(rec, [1, 2]);
+    expect(firstRecorded(u, 120, 1000)).toBe(120);     // dans une période : tel quel
+    expect(firstRecorded(u, 350, 1000)).toBe(500);     // dans un trou : début de la période suivante
+    expect(firstRecorded(u, 650, 1000)).toBeNull();     // plus rien
+    expect(union({}, [1])).toEqual([]);
+  });
+});
+
+describe("sauvegarde", () => {
+  it("mesure la part enregistrée de la période", async () => {
+    const { covered } = await import("./Export");
+    expect(covered([[100, 200], [300, 400]], 150, 350)).toBe(100);
+    expect(covered([[100, 200]], 250, 300)).toBe(0);
+    expect(covered([], 0, 60)).toBe(0);
+  });
+  it("affiche la durée en minutes et secondes", async () => {
+    const { fmtDur } = await import("./Export");
+    expect(fmtDur(300)).toBe("5 min");
+    expect(fmtDur(277)).toBe("4 min 37 s");
+  });
+});

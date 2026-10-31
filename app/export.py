@@ -1,6 +1,6 @@
 """Extrait vidéo à remettre aux forces de l'ordre (vol, agression…), sans passer par l'interface du NVR.
 
-Le pharmacien coupe la période aux ciseaux dans « Voir la vidéo » (heure du PC). CamSup télécharge l'enregistrement
+Le pharmacien coupe la période aux ciseaux dans « Vidéo » (heure du PC). CamSup télécharge l'enregistrement
 d'origine depuis le NVR Dahua (`loadfile.cgi`, lecture seule), le copie en MP4 sans réencoder l'image et prépare un
 ZIP : une vidéo par caméra + `LISEZ-MOI.txt` (pharmacie, période, écart d'horloge du NVR, empreintes SHA-256).
 Le navigateur l'enregistre sur le PC ; la copie de travail de CamSup est effacée après `EXPORT_RETENTION_DAYS`.
@@ -50,6 +50,8 @@ def create(user, site_id: int, cams: list[dict], start_ts: int, end_ts: int, rea
     minutes = (end_ts - start_ts) / 60
     if minutes <= 0:
         raise ExportError("La fin doit être après le début")
+    if minutes < 1:
+        raise ExportError("1 min au moins par extrait")
     if minutes > config.EXPORT_MAX_MINUTES:
         raise ExportError(f"Période trop longue : {config.EXPORT_MAX_MINUTES} min au plus par extrait")
     if start_ts > db.now():

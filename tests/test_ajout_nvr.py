@@ -112,3 +112,34 @@ def test_identifiants_refuses_rien_ne_change(env, monkeypatch):
     assert admin.post("/api/nvr/rescan", json={"host": "10.9.9.9"}, headers=H).status_code == 404
     pharma = client("pharma", "motdepasse-pharma")
     assert pharma.put("/api/nvr/credentials", json={"host": NVR["host"], "username": "x"}, headers=H).status_code == 403
+
+
+def test_export_configuration_nvr(env, monkeypatch):
+    """Sauvegarde de la configuration du NVR : intégrateur seulement, téléchargée, journalisée, date retenue."""
+    cam = db.one("SELECT * FROM cameras WHERE id=?", (env["cam_a"],))
+    db.x("UPDATE cameras SET brand='dahua' WHERE id=?", (cam["id"],))
+    asked = []
+    monkeypatch.setattr(nvrwatch, "config_backup", lambda h, p, u, pw: asked.append((h, u, pw)) or b'{"General": {}}')
+    admin = client("admin", config.ADMIN_PASSWORD)
+    r = admin.get("/api/nvr/config", params={"host": cam["host"]})
+    assert r.status_code == 200 and r.content == b'{"General": {}}'
+    assert ".backup" in r.headers["content-disposition"] and r.headers["cache-control"] == "no-store"
+    assert asked == [(cam["host"], cam["username"], security.decrypt(cam["password_enc"]))]
+    assert cam["host"] in admin.get("/api/overview").json()["config_saved"]
+    assert "nvr.configuration" in [a["action"] for a in db.q("SELECT action FROM audit")]
+    pharma = client("pharma", "motdepasse-pharma")
+    assert pharma.get("/api/nvr/config", params={"host": cam["host"]}).status_code == 403
+    assert pharma.get("/api/overview").json()["config_saved"] == {}
+    assert admin.get("/api/nvr/config", params={"host": "10.9.9.9"}).status_code == 404
+
+
+def test_alertes_rattachees_a_la_pharmacie(env):
+    from app import alerting
+    cam = db.one("SELECT * FROM cameras WHERE id=?", (env["cam_a"],))
+    alerting.raise_alert(f"nvr:{cam['host']}", None, "nvr", "NVR injoignable")
+    admin = client("admin", config.ADMIN_PASSWORD)
+    a = [x for x in admin.get("/api/alerts").json() if x["key"] == f"nvr:{cam['host']}"][0]
+    assert a["site_id"] == cam["site_id"]
+    assert [x["key"] for x in admin.get("/api/alerts", params={"site_id": cam["site_id"]}).json()] == [f"nvr:{cam['host']}"]
+    assert admin.get("/api/alerts", params={"site_id": cam["site_id"] + 999}).json() == []
+    alerting.clear_alert(f"nvr:{cam['host']}")

@@ -49,6 +49,7 @@ docker run --rm -v "$WORK/src":/src -w /src tobix/pywine:3.12 sh -c \
 docker run --rm -v "$WORK/src":/w alpine:3 sh -c "chmod -R a+rwX /w"
 
 echo "4/4 installateur (Inno Setup)"
+if [ -f "$ROOT/packaging/windows/email.env" ]; then echo "   réglages e-mail inclus (packaging/windows/email.env)"; else echo "   sans réglages e-mail (voir packaging/windows/email.env.exemple)"; fi
 docker run --rm -v "$WORK/src":/work -w /work amake/innosetup "/DAppVersion=$VERSION" packaging/windows/camsup.iss 2>&1 | grep -E "Successful|Error"
 mkdir -p "$ROOT/dist" && cp "$WORK/src/dist/CamSup-Installation-$VERSION.exe" "$ROOT/dist/"
 echo "Terminé : dist/CamSup-Installation-$VERSION.exe"

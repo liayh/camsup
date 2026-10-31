@@ -50,7 +50,7 @@ def nvr(monkeypatch, video):
 def _ask(c, site, cams, minutes=10):
     start = int(time.time()) - 3600
     return c.post("/api/exports", json={"site_id": site, "camera_ids": cams, "start_ts": start,
-                                         "end_ts": start + minutes * 60, "reason": "plainte 123"}, headers=H)
+                                         "end_ts": start + int(minutes * 60), "reason": "plainte 123"}, headers=H)
 
 
 def test_extrait_complet(env, nvr):
@@ -95,6 +95,8 @@ def test_controles_et_cloisonnement(env, nvr):
     assert _ask(c, env["b"], [env["cam_b"]]).status_code == 404                     # pharmacie d'un autre
     assert _ask(c, env["a"], [env["cam_b"]]).status_code == 404
     assert _ask(c, env["a"], [env["cam_a"]], minutes=config.EXPORT_MAX_MINUTES + 1).status_code == 400
+    r = _ask(c, env["a"], [env["cam_a"]], minutes=0.5)                              # 1 à 15 min
+    assert r.status_code == 400 and "1 min" in r.json()["detail"]
     future = int(time.time()) + 600
     assert c.post("/api/exports", json={"site_id": env["a"], "camera_ids": [env["cam_a"]], "start_ts": future,
                                         "end_ts": future + 60}, headers=H).status_code == 400
@@ -171,3 +173,28 @@ def test_apercu_copie_sans_conversion(env, nvr, monkeypatch):
     assert c.post("/api/previews", json={"camera_id": env["cam_a"], "start_ts": start, "mode": "autre"},
                   headers=H).status_code == 422
     assert c.get("/api/overview").json()["export_max_minutes"] == config.EXPORT_MAX_MINUTES == 15
+
+
+def test_periodes_enregistrees(env, nvr, monkeypatch):
+    """Barre de temps : fichiers du NVR fusionnés, coupés à la période, ramenés à l'heure du PC."""
+    import contextlib
+
+    from app import dahuarpc, nvrwatch
+    files = {1: [("2026-10-31 09:50:00", "2026-10-31 10:00:00"), ("2026-10-31 10:00:01", "2026-10-31 12:30:00"),
+                 ("2026-10-30 13:00:00", "2026-10-30 19:34:13")]}
+    monkeypatch.setattr(dahuarpc, "shared", lambda *a, **k: contextlib.nullcontext(None))
+    monkeypatch.setattr(nvrwatch, "_files", lambda s, ch, start, end: files.get(ch, []))
+    ch = db.one("SELECT channel FROM cameras WHERE id=?", (env["cam_a"],))["channel"]
+    files[ch] = files.pop(1)
+    nvr_ts = lambda t: int(datetime.strptime(t, nvrwatch.FMT).timestamp())          # noqa: E731
+    start, end = nvr_ts("2026-10-30 18:00:00") - 3600, nvr_ts("2026-10-31 12:00:00") - 3600   # heure du PC
+    c = client("pharma", "motdepasse-pharma")
+    r = c.post("/api/recordings", json={"camera_ids": [env["cam_a"]], "start_ts": start, "end_ts": end}, headers=H)
+    assert r.status_code == 200, r.text
+    assert r.json() == {str(env["cam_a"]): [[start, nvr_ts("2026-10-30 19:34:13") - 3600],
+                                            [nvr_ts("2026-10-31 09:50:00") - 3600, end]]}
+    # autre pharmacie, période trop longue
+    assert c.post("/api/recordings", json={"camera_ids": [env["cam_b"]], "start_ts": start, "end_ts": end},
+                  headers=H).status_code == 404
+    assert c.post("/api/recordings", json={"camera_ids": [env["cam_a"]], "start_ts": start, "end_ts": start + 2 * 86400},
+                  headers=H).status_code == 400

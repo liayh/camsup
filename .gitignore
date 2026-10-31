@@ -11,3 +11,5 @@ build/
 packaging/windows/ffmpeg/
 .pytest_cache/
 .claude/
+packaging/windows/email.env
+camsup-email.env

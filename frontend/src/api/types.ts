@@ -23,11 +23,11 @@ export interface RecorderHealth { brand: string; host: string; site_id: number; 
 export interface NvrCamera { id: number; name: string; channel: number; state: string; last_record: string | null }
 export interface NvrWatch { host: string; site_id: number; site: string; checked: number; error: string; nvr_time: string; cameras: NvrCamera[] }
 
-export interface Alert { id: number; key: string; camera_id: number | null; kind: string; message: string; opened_ts: number; closed_ts: number | null }
+export interface Alert { id: number; key: string; camera_id: number | null; site_id: number | null; kind: string; message: string; opened_ts: number; closed_ts: number | null }
 
 export interface Overview {
   me: Me; sites: Site[]; cameras: Camera[]; alerts: Alert[];
-  recorders: RecorderHealth[]; nvr: NvrWatch[]; email: boolean; export_max_minutes: number; now: number;
+  recorders: RecorderHealth[]; nvr: NvrWatch[]; email: boolean; export_max_minutes: number; config_saved: Record<string, number>; now: number;
 }
 
 export interface CameraTest { ok: boolean; error?: string; nvr_time?: string; state?: string; last_record?: string | null; disks?: number }
@@ -45,7 +45,7 @@ export interface Preview { id: string; camera_id: number; start_ts: number; end_
 export type EmailSecurity = "starttls" | "ssl" | "aucune";
 export interface EmailSettings {
   host: string; port: number; security: EmailSecurity; user: string; has_password: boolean; sender: string; to: string[];
-  source: string; configured: boolean; last: { ts: number; ok: boolean; error: string } | null;
+  source: string; configured: boolean; app_password: string; last: { ts: number; ok: boolean; error: string } | null;
 }
 
 export interface NvrChannelFound { channel: number; state: string; title: string; name: string; known: boolean }

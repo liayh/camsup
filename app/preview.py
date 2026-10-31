@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import config, export, nvrwatch, security
+from . import cameras, config, export, nvrwatch, security
 
 log = logging.getLogger("preview")
 DIR = config.DATA_DIR / "previews"
@@ -77,6 +77,24 @@ def _trim() -> None:
         _jobs.pop(j["id"], None)
         path(j["id"]).unlink(missing_ok=True)
         total -= sizes[j["id"]]
+
+
+def recorded(cams: list[dict], start_ts: int, end_ts: int) -> dict[int, list[list[int]]]:
+    """Périodes enregistrées de chaque caméra entre `start_ts` et `end_ts` (heure du PC), pour la barre de temps :
+    la tranche demandée peut tomber dans un trou (caméra débranchée, NVR arrêté) ; un NVR à la fois."""
+    out: dict[int, list[list[int]]] = {}
+    by_nvr: dict[tuple, list[dict]] = {}
+    for c in cams:
+        by_nvr.setdefault(cameras.device_key(c), []).append(c)
+    for group in by_nvr.values():
+        c0 = group[0]
+        pw = security.decrypt(c0["password_enc"])
+        shift = timedelta(seconds=export._offset(c0, pw))
+        found = nvrwatch.recordings(c0["host"], c0["port_http"], c0["username"], pw, [c["channel"] for c in group],
+                                    datetime.fromtimestamp(start_ts) + shift, datetime.fromtimestamp(end_ts) + shift)
+        for c in group:
+            out[c["id"]] = [[int((a - shift).timestamp()), int((b - shift).timestamp())] for a, b in found[c["channel"]]]
+    return out
 
 
 def get(key: str) -> dict | None:

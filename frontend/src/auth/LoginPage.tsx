@@ -16,7 +16,7 @@ export function LoginPage() {
   return (
     <div className="login">
       <form className="card login-card" onSubmit={submit}>
-        <h1>BLL Vision Monitor</h1>
+        <h1>CamSup</h1>
         <label>Utilisateur<input name="u" autoComplete="username" required autoFocus /></label>
         <label>Mot de passe<input name="p" type="password" autoComplete="current-password" required /></label>
         {error && <p className="error-text" role="alert">{error}</p>}

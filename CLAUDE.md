@@ -31,14 +31,15 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   ≠ Connected `NVR_FAILS` fois. `rec:<id>` après `RECORD_STALE_MINUTES` (15) min, **horloge du NVR**.
   `nvr:<hôte>` injoignable (message lisible via `reason()`) ; délai de grâce `NVR_BOOT_GRACE_SECONDS` (120 s) après
   son retour (il met ≈ 1 min à reconnecter ses caméras : sinon fausses alertes, vu le 30/10). Hikvision non pris en charge.
-- `export.py` : extrait vidéo (menu « Voir la vidéo » : bouton « Extraire et enregistrer » après les ciseaux ; tous
+- `export.py` : extrait vidéo (menu « Sauvegarde vidéo », route `/video` : caméras + jour + début + durée 1–15 min →
+  « Extraire et enregistrer », sans lecture préalable ; « Chercher le moment » (lecture) règle début / durée aux ciseaux ; tous
   les rôles, sur leurs sites ; `showSaveFilePicker` sinon téléchargement ; pas de liste d'extraits, copie effacée après 1 jour). Période saisie à l'heure
   du PC, convertie à l'heure du NVR (écart lu par `nvrwatch.probe`) ; `loadfile.cgi` (vidéo d'origine .dav, 400 = aucun
   enregistrement) → `ffmpeg -c:v copy` en MP4 (image non réencodée) → ZIP + `LISEZ-MOI.txt` (empreintes SHA-256).
-  15 min au plus (`EXPORT_MAX_MINUTES`), un extrait à la fois (file de 1), table `exports`, fichiers `data/exports/<id>.zip`, purge après
+  1 à 15 min (`EXPORT_MAX_MINUTES`), un extrait à la fois (file de 1), table `exports`, fichiers `data/exports/<id>.zip`, purge après
   `EXPORT_RETENTION_DAYS`, `recover()` au démarrage. Mesuré : 10 min d'une caméra 5 Mpx H.265 = 231 Mo en 22 s.
   ffmpeg à fournir sous Windows (`FFMPEG`) : non vérifié.
-- `preview.py` : « Voir la vidéo » : tranche horaire (≤ 6 h), 1 à 4 caméras synchronisées, lue par morceaux de 5 min
+- `preview.py` : « Chercher le moment » : tranche horaire (≤ 6 h), 1 à 4 caméras synchronisées, lue par morceaux de 5 min
   (morceau en cours + suivant demandés par l'interface), ciseaux début / fin sur la barre de temps.
   La planche d'images (« chercher le moment ») a été retirée à la demande de l'utilisateur (30/10/2026).
   Le NVR n'enregistre pas le flux secondaire (subtype=1 → 400). Mode `copie` (MP4 H.265 étiqueté `hvc1`, 0,04 s/min)
@@ -57,7 +58,11 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   `config.EMAIL_KINDS` (`nvr`, `rec`, `hdd`), webhook pour tout ; envois en arrière-plan.
 - `mail.py` : réglages e-mail saisis dans Paramètres (`settings.email`, JSON, mot de passe chiffré ; sinon `SMTP_*` du
   .env), plusieurs destinataires, STARTTLS / SSL / aucune, résultat du dernier envoi (`settings.email_status`).
-  Bouton de test = envoi immédiat avec l'erreur exacte. Aucun compte réel essayé (pas d'identifiants fournis).
+  Formulaire : adresse + mot de passe + destinataire ; serveur déduit par `mail.detect` (fournisseurs connus,
+  sinon essai smtp./mail.<domaine> en 465 puis 587), « Réglages avancés » pour le reste ; « Enregistrer » envoie un test.
+  Installateur : `packaging/windows/email.env` (hors git, modèle `email.env.exemple`) → `%PROGRAMDATA%\CamSup\data\camsup-email.env` (data : réservé, mot de passe en clair jusqu'au premier démarrage),
+  importé chiffré au démarrage (`mail.import_preset`) puis effacé. Serveurs connus joignables (vérifié le 31/10/2026) ;
+  aucun envoi réel essayé (pas d'identifiants fournis).
 - Ajout d'un NVR (`main.py` `/nvr/*`, `nvrwatch.discover`) : identifiants saisis une fois, liste des canaux non
   « Empty » (`ChannelTitle`, noms génériques → « Caméra N »), ajout groupé sans doublon, « chercher de nouvelles
   caméras » avec les identifiants gardés, identifiants communs changés pour tout le NVR (vérifiés avant).
@@ -75,9 +80,13 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 - Base SQLite : `sites`, `cameras` (un canal d'un NVR), `alerts`, `status`, `settings`, `smart_baseline`, `exports`, `users`,
   `user_sites`, `sessions`, `audit`. `db._drop_obsolete` retire les tables de l'ancienne version et reconstruit `sites`
   sans `client_id` (clés étrangères suspendues pendant l'opération, sinon cascade sur les caméras).
-- Interface (`frontend/`, compilée dans `app/static/app`, thème clair) : État et alertes (alertes + disques : secteurs
-  réalloués / en attente / illisibles / CRC avec évolution, `components/DiskHealth`), Voir la vidéo, Enregistreurs et
-  caméras (un module : disques + caméras par NVR, assistant d'ajout), Sites, Utilisateurs, Paramètres (compte, e-mail).
+- Interface (`frontend/`, compilée dans `app/static/app`, thème ardoise et disposition de la maquette du 31/10/2026) : barre du haut
+  (Tableau de bord, Vidéo, NVR et disques, Alertes ; recherche, Paramètres), colonne « Pharmacies » à gauche avec l'état de
+  chacune (`components/SiteContext` : pharmacie choisie + un seul relevé `/overview` toutes les 5 s, `siteState`) ;
+  chaque page montre la pharmacie choisie. Paramètres : compte, utilisateurs et permissions, e-mail. Pas de mur de caméras
+  en direct (refusé par l'utilisateur). « Exporter la configuration » du NVR (`/nvr/config`, intégrateur, `Config.backup`,
+  contient les identifiants des caméras IP ; restauration sur le NVR non essayée). Essai visuel : copie d'essai sur un autre
+  port + Playwright avec /usr/bin/google-chrome.
 - Windows (`packaging/windows`, 1.1) : `camsup_win.py` (point d'entrée : `--serveur` = superviseur qui relance
   `--serveur-processus` ; `--popup` = fenêtre d'alerte ; sans argument = ouvre le navigateur), `camsup.spec`
   (PyInstaller, dossier), `installer-tache.ps1` (droits : `data` système + administrateurs seulement, racine lisible

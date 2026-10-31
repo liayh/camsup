@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api, post } from "../api/client";
-import type { Camera, ExportJob, Overview, Preview } from "../api/types";
+import type { Camera, ExportJob, Preview } from "../api/types";
 import { useAction, useToast } from "../components/Toast";
 import { Badge, Empty, ErrorState, Loading, Notice, PageHeader } from "../components/ui";
 import { fmtBytes, fmtDateTime } from "../format";
-import { useApi } from "../hooks/useApi";
+import { useCurrent } from "../components/SiteContext";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const day = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -37,7 +37,6 @@ const MAX_HOURS = 6;            // tranche horaire affichable d'un coup
 /** Le navigateur annonce-t-il savoir lire le H.265 ? Oui → copie immédiate ; non → conversion par CamSup. */
 const HEVC = typeof document !== "undefined" && document.createElement("video").canPlayType('video/mp4; codecs="hvc1.1.6.L150.90"') !== "";
 
-export type Marks = { start?: number; end?: number };
 type Range = { from: number; to: number };
 
 /** Début de la tranche ramené à la minute (les morceaux du serveur commencent à la minute). */
@@ -51,11 +50,42 @@ export function locate(ts: number, r: Range): [chunk: number, offset: number] {
 }
 /** Position (0–100 %) d'un instant sur la barre de la tranche ; null s'il est en dehors. */
 export function markPos(ts: number | undefined, r: Range): number | null {
-  if (ts === undefined || ts < r.from || ts > r.to) return null;
+  if (ts === undefined || Number.isNaN(ts) || ts < r.from || ts > r.to) return null;
   return ((ts - r.from) / (r.to - r.from)) * 100;
 }
 
-/** Lecture d'une tranche horaire, 1 à 4 caméras synchronisées, avec ciseaux début / fin sur la barre de temps. */
+/** Périodes enregistrées [début, fin] (s) ; `null` = inconnues (NVR non interrogé) : tout est demandé. */
+export type Segs = number[][];
+/** Périodes enregistrées par au moins une des caméras, triées et fusionnées. */
+export function union(rec: Record<string, Segs>, cams: number[]): Segs {
+  const all = cams.flatMap((c) => rec[c] ?? []).map(([a, b]) => [a, b]).sort((x, y) => x[0] - y[0]);
+  const out: Segs = [];
+  for (const [a, b] of all) {
+    if (out.length && a <= out[out.length - 1][1] + 2) out[out.length - 1][1] = Math.max(out[out.length - 1][1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}
+/** Premier instant enregistré dans [from, to[, ou null. */
+export function firstRecorded(segs: Segs, from: number, to: number): number | null {
+  for (const [a, b] of segs) if (b > from && a < to) return Math.max(a, from);
+  return null;
+}
+const hm = (ts: number) => hms(new Date(ts * 1000)).slice(0, 5);
+const dm = (ts: number) => { const d = new Date(ts * 1000); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`; };
+/** « 30/10 13:00 → 19:34, 31/10 09:50 → 12:54 » */
+export const fmtSegs = (segs: Segs) =>
+  segs.map(([a, b]) => `${dm(a)} ${hm(a)} → ${dm(a) === dm(b) ? "" : dm(b) + " "}${hm(b)}`).join(", ");
+
+/** Secondes enregistrées (par au moins une caméra) dans [a, b[. */
+export function covered(segs: Segs, a: number, b: number): number {
+  return segs.reduce((n, [x, y]) => n + Math.max(0, Math.min(y, b) - Math.max(x, a)), 0);
+}
+/** « 5 min », « 4 min 37 s » */
+export const fmtDur = (s: number) => `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ""}`;
+
+/** Sauvegarde (début + durée de 1 à 15 min, extraite directement) et lecture d'une tranche horaire pour trouver le
+ *  moment : 1 à 4 caméras synchronisées, ciseaux qui règlent le début et la durée de la sauvegarde. */
 function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId: number; siteName: string; maxMinutes: number }) {
   const run = useAction();
   const toast = useToast();
@@ -72,21 +102,54 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
   const [pos, setPos] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
-  const [marks, setMarks] = useState<Marks>({});
+  const [startTime, setStartTime] = useState(hms(new Date(now.getTime() - 900000)));   // début de la sauvegarde
+  const [dur, setDur] = useState(300);                                                   // durée (s)
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState<Saving | null>(null);
+  const [rec, setRec] = useState<Record<string, Segs> | null>(null);       // périodes enregistrées ce jour-là
+  const [looking, setLooking] = useState(false);
+  const recFor = useRef<{ key: string; p: Promise<Record<string, Segs> | null> } | null>(null);
   const vids = useRef<Record<number, HTMLVideoElement | null>>({});
   const asked = useRef<Set<string>>(new Set());
   const startAt = useRef(0);
   const name = useMemo(() => new Map(cams.map((c) => [c.id, c.name])), [cams]);
   const base = range ? rangeStart(range.from) : 0;
   const chunks = range ? Math.ceil((range.to - base) / CHUNK) : 0;
+  const span = (k: number): [number, number] => [base + k * CHUNK, base + (k + 1) * CHUNK];
+  /** La caméra a-t-elle des images dans le morceau k ? (inconnu → oui) */
+  const has = (cam: number, k: number) => !rec || !(cam in rec) || firstRecorded(rec[cam], ...span(k)) !== null;
+  /** Décalage (s) du début de la vidéo d'un morceau qui commence dans un trou : le NVR n'envoie que ce qui existe. */
+  const lead = (cam: number, k: number) => {
+    const f = rec && cam in rec ? firstRecorded(rec[cam], ...span(k)) : null;
+    return f === null ? 0 : f - span(k)[0];
+  };
+  const recorded = useMemo(() => (rec ? union(rec, shown) : null), [rec, shown]);
+  const bStart = new Date(`${date}T${startTime.length === 5 ? startTime + ":00" : startTime}`).getTime() / 1000;
+  const bEnd = bStart + dur;
+
+  /** Ce que le NVR a enregistré le jour choisi (et la nuit suivante), pour les caméras cochées ; une demande par choix. */
+  const fetchRec = (d: string, ids: number[]) => {
+    const key = `${d}|${[...ids].sort().join(",")}`;
+    if (recFor.current?.key !== key) {
+      const dayStart = new Date(`${d}T00:00`).getTime() / 1000;
+      const end = Math.min(dayStart + 30 * 3600, Math.floor(Date.now() / 1000));
+      recFor.current = { key, p: end <= dayStart ? Promise.resolve({}) : post<Record<string, Segs>>("/recordings", { camera_ids: ids, start_ts: dayStart, end_ts: end })
+        .catch((err) => { toast(`Périodes enregistrées inconnues : ${(err as Error).message}`, "info"); recFor.current = null; return null; }) };
+    }
+    return recFor.current.p;
+  };
+  useEffect(() => {
+    if (!sel.length || !date) return;
+    let live = true;
+    fetchRec(date, sel).then((r) => { if (live) setRec(r); });
+    return () => { live = false; };
+  }, [date, sel]); // fetchRec : même résultat pour un même jour et les mêmes caméras
 
   // morceau en cours et le suivant (lecture sans attente), pour chaque caméra affichée
   useEffect(() => {
     if (!range) return;
     for (const k of [chunk, chunk + 1].filter((k) => k < chunks)) {
-      for (const cam of shown) {
+      for (const cam of shown.filter((c) => has(c, k))) {
         const key = `${mode}-${k}-${cam}`;
         if (asked.current.has(key)) continue;
         asked.current.add(key);
@@ -94,7 +157,7 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
           .then((r) => { if (r) setJobs((j) => ({ ...j, [key]: r })); else asked.current.delete(key); });
       }
     }
-  }, [range, chunk, shown, mode, chunks, base, run]);
+  }, [range, chunk, shown, mode, chunks, base, run, rec]);
 
   // suit la préparation (téléchargement depuis le NVR, puis copie ou conversion)
   useEffect(() => {
@@ -112,38 +175,56 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
   }, [jobs]);
 
   const job = (cam: number) => jobs[`${mode}-${chunk}-${cam}`];
-  const ready = shown.filter((c) => job(c)?.state === "pret");
+  const ready = shown.filter((c) => has(c, chunk) && job(c)?.state === "pret");
   const master = ready[0];
   const all = () => ready.map((c) => vids.current[c]).filter((v): v is HTMLVideoElement => !!v);
   const at = base + chunk * CHUNK + Math.floor(pos);
 
+  /** Lecture de [from, to] (heure du PC) pour les caméras cochées. */
+  const display = async (want: Range) => {
+    const r = { from: want.from, to: Math.min(want.to, Math.floor(Date.now() / 1000)) };
+    if (!sel.length) return;
+    if (r.to <= r.from) { toast("Cette période n’est pas encore enregistrée", "bad"); return; }
+    if (r.to - r.from > MAX_HOURS * 3600) { toast(`${MAX_HOURS} h au plus d’un coup`, "bad"); return; }
+    setLooking(true);
+    const found = await fetchRec(date, sel);      // pour la barre de temps et pour sauter les trous
+    setLooking(false);
+    const first = found ? firstRecorded(union(found, sel), r.from, r.to) : r.from;
+    const [k, off] = locate(first ?? r.from, r);
+    startAt.current = off;
+    asked.current.clear(); setJobs({});
+    setRec(found); setRange(r); setShown(sel); setChunk(k); setPos(off); setPlaying(true);
+  };
   const show = (e: FormEvent) => {
     e.preventDefault();
     const p = period(date, from, to);
-    if (!p || !sel.length) return;
-    const r = { from: p[0], to: Math.min(p[1], Math.floor(Date.now() / 1000)) };
-    if (r.to <= r.from) { toast("Cette tranche n’est pas encore enregistrée", "bad"); return; }
-    if (r.to - r.from > MAX_HOURS * 3600) { toast(`${MAX_HOURS} h au plus d’un coup`, "bad"); return; }
-    const [k, off] = locate(r.from, r);
-    startAt.current = off;
-    setRange(r); setShown(sel); setChunk(k); setPos(off); setPlaying(true); setMarks({}); setSaving(null);
+    if (p) display({ from: p[0], to: p[1] });
   };
   const goTo = (ts: number) => {
     if (!range) return;
-    const [k, off] = locate(ts, range);
+    const f = recorded ? firstRecorded(recorded, ts, range.to) : null;      // dans un trou : moment enregistré suivant
+    const [k, off] = locate(f ?? ts, range);
     setPos(off);
-    if (k === chunk) { for (const v of all()) v.currentTime = off; return; }
+    if (k === chunk) { for (const c of ready) { const v = vids.current[c]; if (v) v.currentTime = Math.max(0, off - lead(c, k)); } return; }
     startAt.current = off;
     setChunk(k);
   };
   const sync = (t: number) => {
     setPos(t);
     if (range && base + chunk * CHUNK + t >= range.to) { for (const v of all()) v.pause(); setPlaying(false); return; }
-    for (const v of all()) if (Math.abs(v.currentTime - t) > 0.5) v.currentTime = t;
+    for (const c of ready) {
+      const v = vids.current[c], want = Math.max(0, t - lead(c, chunk));
+      if (v && c !== master && Math.abs(v.currentTime - want) > 0.5) v.currentTime = want;
+    }
   };
+  /** Morceau suivant qui contient des images (les trous d'enregistrement sont sautés). */
   const next = () => {
-    if (chunk + 1 >= chunks) { setPlaying(false); return; }
-    startAt.current = 0; setPos(0); setChunk(chunk + 1);
+    let k = chunk + 1;
+    while (k < chunks && !shown.some((c) => has(c, k))) k++;
+    if (k >= chunks) { setPlaying(false); return; }
+    const f = recorded ? firstRecorded(recorded, ...span(k)) : null;
+    const off = f === null ? 0 : f - span(k)[0];
+    startAt.current = off; setPos(off); setChunk(k);
   };
   const toggle = () => {
     const go = !playing;
@@ -158,14 +239,17 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
     setMode("conversion");
   };
   const pick = (id: number) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length < MAX_VIEW ? [...s, id] : s));
-  const dur = marks.start !== undefined && marks.end !== undefined ? marks.end - marks.start : null;
   const working = !!saving && !["fini", "erreur"].includes(saving.state);
-  const canSave = dur !== null && dur > 0 && dur <= maxMinutes * 60 && !working;
+  const nowTs = Math.floor(Date.now() / 1000);
+  const canSave = sel.length > 0 && !Number.isNaN(bStart) && bStart < nowTs && dur >= 60 && dur <= maxMinutes * 60 && !working;
+  const segs = rec ? union(rec, sel) : null;
+  const got = segs && !Number.isNaN(bStart) ? covered(segs, bStart, Math.min(bEnd, nowTs)) : null;
 
-  /** Coupe la tranche marquée aux ciseaux, la fait extraire par CamSup puis l'enregistre sur ce PC. */
-  const save = async () => {
-    if (!canSave || marks.start === undefined || marks.end === undefined) return;
-    const name = fileName(siteName, marks.start);
+  /** Fait extraire la période par CamSup puis l'enregistre sur ce PC. */
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!canSave) return;
+    const name = fileName(siteName, bStart);
     // Chrome / Edge : choix du dossier (clé USB…) tout de suite, pendant que le clic de l'utilisateur est valable
     const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
     let handle: SaveHandle | null = null;
@@ -177,7 +261,7 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
         if ((e as Error).name === "AbortError") { setSaving(null); return; }
       }
     }
-    const r = await run(() => post<{ id: number }>("/exports", { site_id: siteId, camera_ids: shown, start_ts: marks.start, end_ts: marks.end, reason }));
+    const r = await run(() => post<{ id: number }>("/exports", { site_id: siteId, camera_ids: sel, start_ts: bStart, end_ts: bEnd, reason }));
     if (!r) { setSaving(null); return; }
     try {
       let j: ExportJob;
@@ -205,41 +289,89 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
       setSaving({ state: "erreur", id: r.id, text: `Enregistrement interrompu : ${(e as Error).message}` });
     }
   };
-  const cut = (what: "start" | "end") => setMarks((m) => ({ ...m, [what]: at }));
-  const busy = shown.some((c) => !job(c) || job(c).state === "attente" || job(c).state === "en_cours");
+  /** Ciseaux : début de la sauvegarde à l'image affichée ; fin = durée depuis ce début. */
+  const cutStart = () => { const d = new Date(at * 1000); setDate(day(d)); setStartTime(hms(d)); setSaving(null); };
+  const cutEnd = () => {
+    const d = at - bStart;
+    if (Number.isNaN(d) || d < 60) { toast("La fin doit être au moins 1 min après le début de la sauvegarde", "bad"); return; }
+    if (d > maxMinutes * 60) { toast(`${maxMinutes} min au plus : avancez le début (✂ Début ici)`, "bad"); return; }
+    setDur(d); setSaving(null);
+  };
+  const busy = shown.some((c) => has(c, chunk) && (!job(c) || job(c).state === "attente" || job(c).state === "en_cours"));
+  const inRange = recorded && range ? recorded.filter(([a, b]) => b > range.from && a < range.to) : null;
 
+  const minutes = Array.from({ length: maxMinutes }, (_, i) => (i + 1) * 60);
   return (
+    <>
     <section className="card">
-      <form className="form" onSubmit={show}>
+      <h2>Sauvegarde</h2>
+      <form className="form" onSubmit={save}>
         <div className="chips">{cams.map((c) => (
           <label key={c.id} className="check chip"><input type="checkbox" checked={sel.includes(c.id)} onChange={() => pick(c.id)}
             disabled={!sel.includes(c.id) && sel.length >= MAX_VIEW} /> {c.name}</label>
         ))}</div>
         <div className="grid-form form">
           <label>Jour<input type="date" required value={date} max={day(now)} onChange={(e) => setDate(e.target.value)} /></label>
+          <label>Début<input type="time" step={1} required value={startTime} onChange={(e) => setStartTime(e.target.value)} /></label>
+          <label>Durée<select value={dur} onChange={(e) => setDur(Number(e.target.value))}>
+            {!minutes.includes(dur) && <option value={dur}>{fmtDur(dur)}</option>}
+            {minutes.map((m) => <option key={m} value={m}>{m / 60} min</option>)}</select></label>
+          <label>Fin<input readOnly value={Number.isNaN(bEnd) ? "" : hms(new Date(bEnd * 1000))} tabIndex={-1} /></label>
+        </div>
+        {got !== null && (got >= Math.min(bEnd, nowTs) - bStart - 2 ? <p className="small"><Badge tone="ok">images enregistrées</Badge> sur toute la période</p>
+          : got > 0 ? <p className="small"><Badge tone="warn">en partie</Badge> le NVR n’a des images que sur {fmtDur(Math.round(got))} de cette période</p>
+          : <p className="small"><Badge tone="bad">aucune image</Badge> le NVR n’a rien enregistré sur cette période
+            {segs?.length ? <> (enregistré ce jour-là : {fmtSegs(segs)})</> : ""}</p>)}
+        <div className="row">
+          <input className="grow" maxLength={200} placeholder="Motif ou n° de plainte (facultatif, écrit dans la fiche)" value={reason}
+                 onChange={(e) => setReason(e.target.value)} aria-label="Motif ou numéro de plainte" />
+          <button type="button" className="btn" disabled={!sel.length || looking || Number.isNaN(bStart)}
+                  onClick={() => display({ from: bStart, to: bEnd })}>▶ Voir cette période</button>
+          <button className="btn primary" disabled={!canSave}>⬇ Extraire et enregistrer ({sel.length} caméra{sel.length > 1 ? "s" : ""})</button>
+        </div>
+        {saving && (
+          <p className={saving.state === "erreur" ? "error-text" : saving.state === "fini" ? "" : "muted"}>
+            {working && <span className="spinner" />} {saving.text}
+            {saving.state === "fini" && saving.id && <> <a href={`/api/exports/${saving.id}/fichier`} download>Enregistrer à nouveau</a></>}
+          </p>
+        )}
+      </form>
+    </section>
+    <section className="card">
+      <h2>Chercher le moment</h2>
+      <form className="form" onSubmit={show}>
+        <div className="grid-form form">
           <label>De<input type="time" required value={from} onChange={(e) => setFrom(e.target.value)} /></label>
           <label>À<input type="time" required value={to} onChange={(e) => setTo(e.target.value)} /></label>
-          <button className="btn primary" disabled={!sel.length}>Afficher ({sel.length} caméra{sel.length > 1 ? "s" : ""})</button>
+          <button className="btn" disabled={!sel.length || looking}>
+            {looking ? <><span className="spinner" /> Recherche sur le NVR…</> : <>Afficher ({sel.length} caméra{sel.length > 1 ? "s" : ""})</>}</button>
         </div>
       </form>
-      {range && (
+      {range && inRange?.length === 0 && (
+        <Notice tone="warn">Le NVR n’a aucune image de {shown.length > 1 ? "ces caméras" : "cette caméra"} entre {hm(range.from)} et {hm(range.to)}
+          {" "}(caméra débranchée, coupure de courant ou NVR arrêté ?).
+          {recorded?.length ? <> Enregistré ce jour-là : <b>{fmtSegs(recorded)}</b>.</> : " Rien d’enregistré ce jour-là."}</Notice>
+      )}
+      {range && inRange?.length !== 0 && (
         <div className="viewer">
           <div className={`videos n${shown.length}`}>{shown.map((c) => {
             const j = job(c);
+            const L = lead(c, chunk);
             return (
               <div key={c} className="tile">
                 <div className="tile-name">{name.get(c)}</div>
                 {j?.state === "pret" ? (
                   <video ref={(v) => { vids.current[c] = v; }} key={j.id} src={`/api/previews/${j.id}/video`} autoPlay={playing} muted playsInline
-                         onTimeUpdate={c === master ? (e) => sync(e.currentTarget.currentTime) : undefined}
+                         onTimeUpdate={c === master ? (e) => sync(e.currentTarget.currentTime + L) : undefined}
                          onEnded={c === master ? next : undefined}
                          onLoadedMetadata={(e) => {
                            const m = master !== undefined && master !== c ? vids.current[master] : null;
                            e.currentTarget.playbackRate = speed;
-                           e.currentTarget.currentTime = m ? m.currentTime : startAt.current;
+                           e.currentTarget.currentTime = Math.max(0, (m ? m.currentTime + lead(master!, chunk) : startAt.current) - L);
                          }}
                          onError={failed} onClick={toggle} />
-                ) : j?.state === "erreur" ? <p className="error-text">{j.error}</p>
+                ) : !has(c, chunk) ? <p className="muted">Pas d’image enregistrée à ce moment</p>
+                  : j?.state === "erreur" ? <p className="error-text">{j.error}</p>
                   : <p className="muted"><span className="spinner" /> {mode === "copie" ? "Téléchargement depuis le NVR…" : "Téléchargement puis conversion…"}</p>}
               </div>
             );
@@ -247,9 +379,12 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
           <div className="timebar" role="slider" aria-label="Position dans la tranche horaire" aria-valuenow={at}
                aria-valuemin={range.from} aria-valuemax={range.to}
                onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); goTo(range.from + ((e.clientX - r.left) / r.width) * (range.to - range.from)); }}>
+            {inRange?.map(([a, b]) => (
+              <div key={a} className="timebar-rec" style={{ left: `${markPos(Math.max(a, range.from), range)}%`, right: `${100 - (markPos(Math.min(b, range.to), range) ?? 100)}%` }} />
+            ))}
             <div className="timebar-fill" style={{ width: `${markPos(Math.min(Math.max(at, range.from), range.to), range) ?? 0}%` }} />
-            {markPos(marks.start, range) !== null && <div className="cut cut-start" style={{ left: `${markPos(marks.start, range)}%` }} title="Début de l’extrait">✂</div>}
-            {markPos(marks.end, range) !== null && <div className="cut cut-end" style={{ left: `${markPos(marks.end, range)}%` }} title="Fin de l’extrait">✂</div>}
+            {markPos(bStart, range) !== null && <div className="cut cut-start" style={{ left: `${markPos(bStart, range)}%` }} title="Début de la sauvegarde">✂</div>}
+            {markPos(bEnd, range) !== null && <div className="cut cut-end" style={{ left: `${markPos(bEnd, range)}%` }} title="Fin de la sauvegarde">✂</div>}
           </div>
           <div className="row small muted"><span>{hms(new Date(range.from * 1000)).slice(0, 5)}</span><span className="grow" /><span>{hms(new Date(range.to * 1000)).slice(0, 5)}</span></div>
           <div className="row">
@@ -261,60 +396,35 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
             {SPEEDS.map((s) => <button key={s} className={`btn small ${speed === s ? "primary" : ""}`} onClick={() => setSpeed(s)}>×{s}</button>)}
           </div>
           <div className="row">
-            <button className="btn" onClick={() => cut("start")} disabled={!ready.length}>✂ Début ici</button>
-            <button className="btn" onClick={() => cut("end")} disabled={!ready.length}>✂ Fin ici</button>
-            {marks.start !== undefined && <span>Début {hms(new Date(marks.start * 1000))}</span>}
-            {marks.end !== undefined && <span>Fin {hms(new Date(marks.end * 1000))}</span>}
-            {dur !== null && (dur <= 0 ? <Badge tone="bad">la fin est avant le début</Badge>
-              : dur > maxMinutes * 60 ? <Badge tone="bad">{Math.ceil(dur / 60)} min : {maxMinutes} min au plus</Badge>
-              : <Badge tone="ok">{Math.floor(dur / 60)} min {dur % 60} s</Badge>)}
+            <button className="btn" onClick={cutStart} disabled={!ready.length}>✂ Début ici</button>
+            <button className="btn" onClick={cutEnd} disabled={!ready.length}>✂ Fin ici</button>
+            <span className="muted small">règlent le début et la durée de la sauvegarde (ci-dessus)</span>
           </div>
-          <div className="row">
-            <input className="grow" maxLength={200} placeholder="Motif ou n° de plainte (facultatif, écrit dans la fiche)" value={reason}
-                   onChange={(e) => setReason(e.target.value)} aria-label="Motif ou numéro de plainte" />
-            <button className="btn primary" onClick={save} disabled={!canSave}>
-              ⬇ Extraire et enregistrer ({shown.length} caméra{shown.length > 1 ? "s" : ""})</button>
-          </div>
-          {!dur && !saving && <p className="muted small">Marquez le début et la fin aux ciseaux ({maxMinutes} min au plus) pour extraire.</p>}
-          {saving && (
-            <p className={saving.state === "erreur" ? "error-text" : saving.state === "fini" ? "" : "muted"}>
-              {working && <span className="spinner" />} {saving.text}
-              {saving.state === "fini" && saving.id && <> <a href={`/api/exports/${saving.id}/fichier`} download>Enregistrer à nouveau</a></>}
-            </p>
-          )}
-          <p className="muted small">Cliquez sur la barre pour aller à une heure. {busy ? "Les caméras s’affichent dès que leur vidéo est arrivée. " : ""}
+          <p className="muted small">Cliquez sur la barre pour aller à une heure{inRange ? " (en vert : périodes enregistrées ; les trous sont sautés)" : ""}. {busy ? "Les caméras s’affichent dès que leur vidéo est arrivée. " : ""}
             Heure à quelques secondes près : l’heure exacte est celle incrustée dans l’image.
             {mode === "copie" ? " Vidéo d’origine." : " Vidéo convertie pour ce navigateur."}</p>
         </div>
       )}
     </section>
+    </>
   );
 }
 
 export default function Export() {
-  const ov = useApi<Overview>("/overview");
-  const [siteId, setSiteId] = useState(0);
-  const sites = useMemo(() => (ov.data?.sites ?? []).filter((s) => ov.data?.cameras.some((c) => c.site_id === s.id && c.brand === "dahua")), [ov.data]);
-  const site = siteId || sites[0]?.id || 0;
-  const cams = useMemo(() => (ov.data?.cameras ?? []).filter((c) => c.site_id === site && c.brand === "dahua"), [ov.data, site]);
-
-  if (ov.loading && !ov.data) return <Loading />;
-  if (ov.error && !ov.data) return <ErrorState message={ov.error} onRetry={ov.reload} />;
+  const { ov, site, name, cams: all, loading, error, reload } = useCurrent();
+  const cams = useMemo(() => all.filter((c) => c.brand === "dahua"), [all]);
+  if (loading && !ov) return <Loading />;
+  if (error && !ov) return <ErrorState message={error} onRetry={reload} />;
   return (
     <>
-      <PageHeader title="Voir la vidéo">
-        {sites.length > 1 && (
-          <select value={site} onChange={(e) => setSiteId(Number(e.target.value))} aria-label="Pharmacie">
-            {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
-        )}
-      </PageHeader>
-      <Notice>Choisissez les caméras et la tranche horaire, regardez, coupez aux ciseaux le début et la fin, puis
-        <b> Extraire et enregistrer</b> : un fichier ZIP à remettre tel quel aux gendarmes ou à la police (clé USB). Il
+      <PageHeader title="Vidéo" sub={name} />
+      <Notice>Choisissez les caméras, le début et la durée (1 à {ov?.export_max_minutes ?? 15} min), puis
+        <b> Extraire et enregistrer</b>. Heure inconnue : <b>Chercher le moment</b>, regardez, et réglez la sauvegarde aux
+        ciseaux. Le résultat est un fichier ZIP à remettre tel quel aux gendarmes ou à la police (clé USB). Il
         contient une vidéo MP4 par caméra (copie sans perte de l’enregistrement du NVR) et une fiche <b>LISEZ-MOI</b>
         (pharmacie, période, empreintes de contrôle). Lecture conseillée : VLC.</Notice>
       {!cams.length ? <Empty>Aucune caméra derrière un NVR Dahua.</Empty>
-        : <Viewer key={site} cams={cams} siteId={site} siteName={sites.find((s) => s.id === site)?.name ?? ""}
-                  maxMinutes={ov.data?.export_max_minutes ?? 15} />}
+        : <Viewer key={site} cams={cams} siteId={site} siteName={name} maxMinutes={ov?.export_max_minutes ?? 15} />}
     </>
   );
 }

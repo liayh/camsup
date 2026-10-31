@@ -1,7 +1,12 @@
 import { ReactNode, useEffect } from "react";
 
-export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
-  return <div className="page-header"><h1>{title}</h1><div className="page-actions">{children}</div></div>;
+export function PageHeader({ title, sub, children }: { title: string; sub?: ReactNode; children?: ReactNode }) {
+  return (
+    <div className="page-header">
+      <div><h1>{title}</h1>{sub && <div className="subtitle">{sub}</div>}</div>
+      <div className="page-actions">{children}</div>
+    </div>
+  );
 }
 
 export function Loading({ label = "Chargement…" }: { label?: string }) {

@@ -45,6 +45,9 @@ Source: "ffmpeg\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "installer-tache.ps1"; DestDir: "{app}"; Flags: ignoreversion
 ; ffmpeg (gyan.dev, build « essentials ») : licence GPL, livrée avec
 Source: "ffmpeg\LICENSE-ffmpeg.txt"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; réglages e-mail de l'intégrateur (email.env, hors dépôt git) : importés et chiffrés au premier démarrage, puis effacés
+; dans data\ (protégé par installer-tache.ps1 -Preparer avant la copie) : la racine est lisible par tous les comptes
+Source: "email.env"; DestDir: "{commonappdata}\CamSup\data"; DestName: "camsup-email.env"; Flags: skipifsourcedoesntexist
 
 [Icons]
 ; fenêtre d'alerte à l'ouverture de session (tous les utilisateurs du poste)
