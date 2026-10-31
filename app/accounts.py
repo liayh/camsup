@@ -28,6 +28,11 @@ _fails: dict[str, list[float]] = {}
 _flock = threading.Lock()
 LOCK_FAILS, LOCK_SECONDS = 5, 900
 IP_LOCK_FAILS = 20              # échecs depuis une même adresse, tous comptes confondus (essai de nombreux identifiants)
+# Depuis ce PC (127.0.0.1 : tous les utilisateurs du poste ont la même adresse) : verrou court, sans verrou par adresse,
+# sinon n'importe qui sur le poste bloquerait l'intégrateur et les pharmaciens à volonté. Reste 5 essais par minute.
+LOCAL_LOCK_SECONDS = 60
+LOOPBACK = ("127.0.0.1", "::1")
+_blocked_logged: dict[str, float] = {}
 
 
 # ---------------------------------------------------------------- mots de passe
@@ -98,8 +103,8 @@ def bootstrap(password: str) -> bool:
     return True
 
 
-def _recent(key: str) -> int:
-    recent = [t for t in _fails.get(key, []) if time.time() - t < LOCK_SECONDS]
+def _recent(key: str, window: float = LOCK_SECONDS) -> int:
+    recent = [t for t in _fails.get(key, []) if time.time() - t < window]
     if recent:
         _fails[key] = recent
     else:
@@ -107,12 +112,14 @@ def _recent(key: str) -> int:
     return len(recent)
 
 
-def _locked(key: str, ip: str) -> bool:
+def is_locked(key: str, ip: str) -> bool:
     with _flock:
+        if ip in LOOPBACK:
+            return _recent(key, LOCAL_LOCK_SECONDS) >= LOCK_FAILS
         return _recent(key) >= LOCK_FAILS or _recent(f"ip|{ip}") >= IP_LOCK_FAILS
 
 
-def _fail(key: str, ip: str) -> None:
+def record_failure(key: str, ip: str) -> None:
     with _flock:
         if len(_fails) > 10_000:                 # beaucoup d'essais : on oublie les entrées périmées
             for k in list(_fails):
@@ -124,12 +131,20 @@ def _fail(key: str, ip: str) -> None:
 
 def authenticate(username: str, password: str, ip: str) -> User | None:
     key = f"{username.lower()}|{ip}"
-    if _locked(key, ip):
-        audit(None, "connexion.bloquee", obj=username, ip=ip)
-        raise HTTPException(429, "Trop d'essais : réessayez dans 15 minutes")
+    if is_locked(key, ip):
+        with _flock:                       # une ligne d'audit par verrouillage, pas une par essai (journal rempli)
+            first = time.time() - _blocked_logged.get(key, 0) > LOCK_SECONDS
+            if first:
+                _blocked_logged[key] = time.time()
+                if len(_blocked_logged) > 10_000:
+                    _blocked_logged.clear()
+        if first:
+            audit(None, "connexion.bloquee", obj=username[:80], ip=ip)
+        raise HTTPException(429, "Trop d'essais : réessayez dans 1 minute" if ip in LOOPBACK
+                            else "Trop d'essais : réessayez dans 15 minutes")
     row = db.one("SELECT id,pw_hash FROM users WHERE username=? AND active=1", (username,))
     if not verify_password(password, row["pw_hash"] if row else _DUMMY_HASH) or not row:
-        _fail(key, ip)
+        record_failure(key, ip)
         audit(None, "connexion.echec", obj=username, ip=ip)
         return None
     with _flock:

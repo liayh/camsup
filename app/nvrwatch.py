@@ -19,6 +19,7 @@ import logging
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import requests
@@ -37,6 +38,11 @@ _last: dict[int, str | None] = {}           # caméra → fin du dernier enregis
 _grace: dict[str, float] = {}               # hôte → fin du délai de grâce après le retour du NVR
 
 
+FIND_PAGES = 100                            # pages de 100 fichiers par canal et par relevé, au plus
+FIND_SECONDS = 30                           # durée maximale de la recherche pour un canal
+_poll_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="nvr")
+
+
 def _last_record(s: dahuarpc.Session, channel: int, nvr_now: datetime) -> str | None:
     """Fin du dernier enregistrement du canal (1-based) sur 24 h, à l'heure du NVR, ou None."""
     obj = s.call("mediaFileFind.factory.create").get("result")
@@ -47,7 +53,12 @@ def _last_record(s: dahuarpc.Session, channel: int, nvr_now: datetime) -> str | 
                               "EndTime": nvr_now.strftime(FMT), "Types": ["dav"]}}
         last = None
         if s.call("mediaFileFind.findFile", cond, obj).get("result"):
-            while True:                      # le NVR ignore l'ordre demandé : on lit tout et on garde le max
+            # le NVR ignore l'ordre demandé : on lit tout et on garde le max ; borné (NVR bogué ou piégé qui renvoie
+            # toujours une page pleine)
+            deadline = time.time() + FIND_SECONDS
+            for _ in range(FIND_PAGES):
+                if time.time() > deadline:
+                    raise RuntimeError("recherche d'enregistrements trop longue")
                 infos = (s.call("mediaFileFind.findNextFile", {"count": 100}, obj).get("params") or {}).get("infos") or []
                 for i in infos:
                     if i.get("EndTime") and (last is None or i["EndTime"] > last):
@@ -200,8 +211,8 @@ def check(cams: list[dict]) -> None:
     if not _running.acquire(blocking=False):
         return
     try:
-        for key, group in _groups(cams).items():
-            _poll(key, group)
+        # en parallèle : un NVR lent ne retarde pas les autres
+        list(_poll_pool.map(lambda kv: _poll(*kv), _groups(cams).items()))
     finally:
         _running.release()
 

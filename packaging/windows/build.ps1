@@ -26,7 +26,7 @@ if (Get-Command npm -ErrorAction SilentlyContinue) {
 Write-Host "2/5 Environnement Python de fabrication (.venv-build)"
 if (-not (Test-Path .venv-build)) { python -m venv .venv-build }
 .\.venv-build\Scripts\python -m pip install --upgrade pip
-.\.venv-build\Scripts\pip install -r requirements.txt pyinstaller
+.\.venv-build\Scripts\pip install -r requirements.txt -c packaging\windows\constraints.txt pyinstaller
 
 Write-Host "3/5 ffmpeg (conversion des extraits vidéo)"
 $Ffmpeg = "packaging\windows\ffmpeg\ffmpeg.exe"
@@ -40,6 +40,16 @@ if (-not (Test-Path $Ffmpeg)) {
     New-Item -ItemType Directory -Force (Split-Path $Ffmpeg) | Out-Null
     Copy-Item (Get-ChildItem $Tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName $Ffmpeg
     Copy-Item (Get-ChildItem $Tmp -Recurse -Filter LICENSE | Select-Object -First 1).FullName (Join-Path (Split-Path $Ffmpeg) "LICENSE-ffmpeg.txt")
+}
+# ffmpeg tourne sous le compte système sur chaque poste : empreinte enregistrée à la première fabrication (à vérifier
+# sur gyan.dev puis à committer), toujours vérifiée ensuite (téléchargement ou fichier déjà présent)
+$Empreinte = "packaging\windows\ffmpeg.sha256"
+$H = (Get-FileHash $Ffmpeg -Algorithm SHA256).Hash.ToLower()
+if (Test-Path $Empreinte) {
+    if ((Get-Content $Empreinte -Raw).Trim() -ne $H) { throw "ffmpeg.exe ($H) ne correspond pas à $Empreinte : refusé" }
+} else {
+    Set-Content $Empreinte $H
+    Write-Host "   ATTENTION : empreinte de ffmpeg.exe enregistrée dans $Empreinte ($H) : la comparer à gyan.dev, puis la committer"
 }
 
 Write-Host "4/5 Programme (PyInstaller) -> dist\CamSup"

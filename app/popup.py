@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 import requests
 import urllib3
 
-from . import config
+from . import config, fenetre
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)     # développement : certificat auto-signé local
 
@@ -61,11 +61,15 @@ def stopped_row(since: float) -> dict:
 
 
 def fetch(timeout: float = 5) -> dict:
-    """État lu sur le serveur de ce PC ; `requests.RequestException` s'il ne répond pas."""
+    """État lu sur le serveur de ce PC et vérifié (signature sur un défi neuf) ; `requests.RequestException` s'il ne
+    répond pas, `ValueError` si ce n'est pas le vrai serveur."""
+    challenge = fenetre.new_challenge()
     url = f"{'https' if config.HTTPS else 'http'}://127.0.0.1:{config.PORT}/api/fenetre"
-    r = requests.get(url, timeout=timeout, verify=False)       # 127.0.0.1 : certificat auto-signé en développement
+    with requests.Session() as s:
+        s.trust_env = False                # jamais par le proxy du poste (127.0.0.1 doit rester sur ce PC)
+        r = s.get(url, params={"defi": challenge}, timeout=timeout, verify=False)   # dev : certificat auto-signé
     r.raise_for_status()
-    return r.json()
+    return fenetre.verify(r.json(), challenge)
 
 
 def read_state(data: dict, now: float, check_heartbeat: bool = True, instance: str = "") -> list[dict]:
@@ -205,8 +209,9 @@ def single_instance() -> bool:
     if os.name != "nt":
         return True
     import ctypes
-    _mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\CamSup-fenetre-alerte")
-    return ctypes.windll.kernel32.GetLastError() != 183       # ERROR_ALREADY_EXISTS
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _mutex = kernel32.CreateMutexW(None, False, "Local\\CamSup-fenetre-alerte")
+    return ctypes.get_last_error() != 183                     # ERROR_ALREADY_EXISTS
 
 
 def main() -> None:

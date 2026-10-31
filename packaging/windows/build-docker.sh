@@ -31,11 +31,20 @@ for suffix, out in (("/bin/ffmpeg.exe", "ffmpeg.exe"), ("/LICENSE", "LICENSE-ffm
         shutil.copyfileobj(src, dst)
 PY
 fi
+# empreinte enregistrée à la première fabrication (à comparer à gyan.dev puis à committer), vérifiée ensuite
+SUM="$ROOT/packaging/windows/ffmpeg.sha256"
+H=$(sha256sum "$FF/ffmpeg.exe" | cut -c1-64)
+if [ -f "$SUM" ]; then
+    [ "$(tr -d ' \r\n' < "$SUM")" = "$H" ] || { echo "ffmpeg.exe ($H) ne correspond pas à $SUM : refusé"; exit 1; }
+else
+    echo "$H" > "$SUM"
+    echo "   ATTENTION : empreinte de ffmpeg.exe enregistrée dans $SUM ($H) : la comparer à gyan.dev, puis la committer"
+fi
 mkdir -p "$WORK/src/packaging/windows/ffmpeg" && cp "$FF"/* "$WORK/src/packaging/windows/ffmpeg/"
 
 echo "3/4 CamSup.exe (PyInstaller sous Wine)"
 docker run --rm -v "$WORK/src":/src -w /src tobix/pywine:3.12 sh -c \
-  "wine python -m pip install -q -r requirements.txt pyinstaller && wine pyinstaller --noconfirm --clean --distpath dist --workpath build packaging/windows/camsup.spec" \
+  "wine python -m pip install -q -r requirements.txt -c packaging/windows/constraints.txt pyinstaller && wine pyinstaller --noconfirm --clean --distpath dist --workpath build packaging/windows/camsup.spec" \
   2>&1 | grep -E "INFO: Build complete|Error|error:" || true
 docker run --rm -v "$WORK/src":/w alpine:3 sh -c "chmod -R a+rwX /w"
 

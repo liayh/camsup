@@ -106,3 +106,36 @@ compte NVR en lecture seule au lieu de l'admin ; NTP du NVR désactivé (horloge
 Windows 1.1 (serveur sous SYSTEM, données réservées) : **rien n'est vérifié sur un vrai Windows** (droits icacls,
 tâche planifiée, mise à jour depuis la 1.0, fenêtre d'alerte par session) ; sous Wine, le Planificateur de tâches et
 PowerShell manquent (l'installateur affichera l'échec de `installer-tache.ps1`).
+
+## Audit du 31/10/2026 (3 relectures indépendantes) : corrigé
+- Installateur : `installer-tache.ps1 -Preparer` avant toute copie (dossier sans installation connue — clé HKLM
+  `Software\CamSup` ou désinstallation Inno — mis de côté en `CamSup.suspect-<date>` ; liens/jonctions supprimés ;
+  propriétaire Administrateurs ; toute autorisation explicite non prévue retirée, `/reset` des enfants) ;
+  `installation.env` écrit après ; Program Files imposé ; code de sortie 10 si la tâche échoue ; mot de passe vérifié
+  aussi en silencieux. `config` refuse des dossiers de données en jonction (FROZEN).
+- Fenêtre d'alerte : réponses signées Ed25519 sur un défi (`fenetre.py`, clé publique `%PROGRAMDATA%\CamSup\fenetre.pub`),
+  sans proxy ; serveur sur 127.0.0.1 et ::1 en `SO_EXCLUSIVEADDRUSE` (`run.local_sockets`), code 3 si le port est pris ;
+  navigateur sur 127.0.0.1 ; `TrustedHostMiddleware` (`ALLOWED_HOSTS`, FROZEN : ce PC).
+- FROZEN : `camsup.env` limité à `config.SAFE_KEYS` ; `HOST`, `DATA_DIR`, `FFMPEG` imposés ; sessions fermées à la
+  mise à jour (`settings.version`).
+- NVR : Basic jamais en HTTP ni vers Dahua ; redirections suivies seulement vers le même hôte (`devicehttp._send`,
+  `dahuarpc._base`) ; réponses RPC2 bornées (5 Mo, durée totale) ; recherche de fichiers bornée (pages, 30 s) ; NVR
+  relevés en parallèle ; `shared()` attend 120 s au plus ; un relevé de disques à la fois.
+- Vidéo : `-protocol_whitelist file`, vidéo texte refusée (`check_video`), dossier propre à chaque aperçu, taille et
+  durée de téléchargement bornées, réserve disque 2 Go, aperçus prêts ≤ 3 Go ; LISEZ-MOI : SHA-256 du .dav d'origine,
+  fuseau UTC±, textes sur une ligne ; ZIP revérifié (SHA-256) avant téléchargement, empreinte dans l'audit.
+- Web : mot de passe à ressaisir si adresse/port/marque/utilisateur (caméra, NVR) ou serveur d'e-mail changent ;
+  adresses de ce PC/lien local refusées ; un NVR = une pharmacie ; `limit` borné ; `Cache-Control: no-store` ;
+  verrou court (60 s) et sans verrou par adresse depuis 127.0.0.1 ; une ligne d'audit par verrouillage ; essais du
+  mot de passe actuel limités ; `mot-de-passe-admin.txt` effacé au changement de mot de passe.
+
+## Audit : reste ouvert (non corrigé)
+- Serveur sous SYSTEM : LOCAL SERVICE réduirait l'impact d'une faille de ffmpeg (droits à revoir, non essayé).
+- Mise à jour avec plusieurs sessions ouvertes : la fenêtre d'alerte des autres sessions n'est relancée qu'à leur
+  prochaine ouverture de session.
+- Fabrication : empreinte de ffmpeg enregistrée à la première fabrication (`ffmpeg.sha256`, à vérifier puis committer) ;
+  versions pip figées (`constraints.txt`) mais sans empreintes ; images Docker et PyInstaller non figés ; aucune
+  signature Authenticode.
+- NVR : certificats non vérifiés (pas d'épinglage), session RPC2 en HTTP si le NVR le permet : compte NVR en lecture
+  seule recommandé. Intégrité des extraits : pas de signature du ZIP. Alertes `camera` sans e-mail (choix).
+- `/MOTDEPASSE=` visible dans les journaux de déploiement : changer le mot de passe à la première connexion.

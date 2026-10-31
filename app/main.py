@@ -3,6 +3,7 @@
 Accès : `accounts.current_user` sur toutes les routes /api. Les ressources d'un site non attribué répondent 404
 (cloisonnement entre pharmacies). Les modifications sont tracées dans le journal d'audit.
 """
+import ipaddress
 import logging
 import re
 import sys
@@ -11,11 +12,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import accounts, alerting, cameras, config, dahuarpc, db, export, mail, monitor, nvrwatch, preview, security, storage
+from . import accounts, alerting, cameras, config, dahuarpc, db, export, fenetre, mail, monitor, nvrwatch, preview, security, storage
 from .accounts import User
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -26,6 +28,7 @@ STATIC = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     db.init()
+    fenetre.ensure_key()
     export.recover()
     preview.purge(everything=True)
     if accounts.bootstrap(security.ADMIN_PASSWORD):
@@ -40,6 +43,11 @@ async def lifespan(_: FastAPI):
                 log.warning("Mot de passe généré dans %s", f)
             elif sys.__stderr__:
                 print(f"Mot de passe de '{config.ADMIN_USER}' : {security.ADMIN_PASSWORD}", file=sys.__stderr__)
+    if config.FROZEN and db.setting("version") != config.VERSION:
+        # mise à jour (1.0 : données modifiables par tous les comptes du poste) : sessions ouvertes fermées
+        db.x("DELETE FROM sessions")
+        accounts.audit(None, "mise_a_jour", detail=f"{db.setting('version') or '1.0'} → {config.VERSION}, sessions fermées")
+        db.set_setting("version", config.VERSION)
     if config.FROZEN:
         config.forget_admin_password()         # saisi à l'installation : inutile (et à ne pas laisser) une fois le compte créé
     monitor.start()
@@ -50,6 +58,10 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="CamSup", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+if config.ALLOWED_HOSTS != ["*"]:
+    # programme Windows : seulement les adresses de ce PC (une page web qui ferait pointer son propre nom vers
+    # 127.0.0.1 ne peut pas lire l'API)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=config.ALLOWED_HOSTS)
 
 
 @app.middleware("http")
@@ -58,6 +70,8 @@ async def security_headers(request: Request, call_next):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "no-referrer"
+    if request.url.path.startswith("/api/") and "Cache-Control" not in resp.headers:
+        resp.headers["Cache-Control"] = "no-store"          # données de l'API : pas de copie dans le cache du navigateur
     if request.url.scheme == "https":
         resp.headers["Strict-Transport-Security"] = "max-age=31536000"
     return resp
@@ -65,6 +79,20 @@ async def security_headers(request: Request, call_next):
 
 # adresse d'enregistreur : nom ou IP seulement (ni « @ », ni « / », ni « ? » qui détourneraient l'URL construite)
 HOST_RE = r"^\s*[A-Za-z0-9.\-\[\]:]+\s*$"
+
+def check_device_host(host: str) -> str:
+    """Adresse d'un enregistreur du réseau : ni ce PC (127.x, localhost), ni lien local, ni adresse spéciale."""
+    h = host.strip().strip("[]")
+    if h.lower() in ("localhost", "localhost.localdomain") or h.lower().endswith(".localhost"):
+        raise ValueError("adresse de ce PC refusée : indiquer l'adresse du NVR sur le réseau")
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        return host
+    if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+        raise ValueError("adresse refusée : indiquer l'adresse du NVR sur le réseau")
+    return host
+
 
 public = APIRouter(prefix="/api")
 router = APIRouter(prefix="/api", dependencies=[Depends(accounts.current_user)])
@@ -88,6 +116,17 @@ class CameraIn(BaseModel):
     password: Optional[str] = None          # None = inchangé en modification
     channel: int = Field(1, ge=1, le=256)
     enabled: bool = True
+
+    _host = field_validator("host")(classmethod(lambda cls, v: check_device_host(v)))
+
+
+def _one_site_per_host(host: str, site_id: int, ignore_id: int | None = None) -> None:
+    """Un enregistreur sert une seule pharmacie : sinon l'état du NVR (noms et état des caméras) d'un site
+    s'afficherait chez l'autre."""
+    other = db.one("SELECT site_id FROM cameras WHERE lower(trim(host))=lower(?) AND site_id<>? AND id<>?",
+                   (host.strip(), site_id, ignore_id or -1))
+    if other:
+        raise HTTPException(409, "Cet enregistreur est déjà rattaché à une autre pharmacie")
 
 
 def _cam(user: User, cid: int) -> dict:
@@ -147,13 +186,19 @@ class PasswordIn(BaseModel):
 @router.post("/me/password")
 def change_password(body: PasswordIn, request: Request, user: User = Me):
     row = db.one("SELECT pw_hash FROM users WHERE id=?", (user.id,))
+    ip, key = accounts.client_ip(request), f"motdepasse|{user.id}"
+    if accounts.is_locked(key, ip):
+        raise HTTPException(429, "Trop d'essais : réessayez plus tard")
     if not accounts.verify_password(body.current, row["pw_hash"]):
+        accounts.record_failure(key, ip)
         raise HTTPException(400, "Mot de passe actuel incorrect")
     accounts.check_password_strength(body.new)
     db.x("UPDATE users SET pw_hash=? WHERE id=?", (accounts.hash_password(body.new), user.id))
     # les autres sessions (autre navigateur, ancien mot de passe connu d'un tiers) sont fermées ; celle-ci reste
     token = request.cookies.get(accounts.COOKIE) or ""
     db.x("DELETE FROM sessions WHERE user_id=? AND token_hash<>?", (user.id, accounts.token_hash(token)))
+    if user.username == config.ADMIN_USER:
+        (config.DATA_DIR / "mot-de-passe-admin.txt").unlink(missing_ok=True)   # mot de passe généré : plus valable
     accounts.audit_req(request, "mot_de_passe.change", obj=user.username)
     return {"ok": True}
 
@@ -235,7 +280,7 @@ def delete_user(uid: int, request: Request):
 # ------------------------------------------------------------------ journal d'audit
 @router.get("/audit")
 def list_audit(user: User = Me, site_id: Optional[int] = None, action: str = "", from_ts: int = 0,
-               to_ts: int = 4102444800, limit: int = 300):
+               to_ts: int = 4102444800, limit: int = Query(300, ge=1, le=2000)):
     """Intégrateur : tout le journal. Pharmacien : uniquement les lignes de ses sites."""
     sql = "SELECT a.*, s.name AS site FROM audit a LEFT JOIN sites s ON s.id=a.site_id WHERE a.ts>=? AND a.ts<=?"
     args: list = [from_ts, to_ts]
@@ -311,6 +356,7 @@ def _cam_values(c: CameraIn) -> list:
 def create_camera(c: CameraIn, request: Request):
     if not db.one("SELECT id FROM sites WHERE id=?", (c.site_id,)):
         raise HTTPException(400, "Site inconnu")
+    _one_site_per_host(c.host, c.site_id)
     cid = db.x("""INSERT INTO cameras(site_id,name,brand,host,port_http,username,channel,enabled,password_enc,created_ts)
                   VALUES(?,?,?,?,?,?,?,?,?,?)""", (*_cam_values(c), security.encrypt(c.password or ""), db.now()))
     accounts.audit_req(request, "camera.creee", c.site_id, f"#{cid} {c.name}")
@@ -322,6 +368,13 @@ def update_camera(cid: int, c: CameraIn, request: Request):
     old = _cam(request.state.user, cid)
     if not db.one("SELECT id FROM sites WHERE id=?", (c.site_id,)):
         raise HTTPException(400, "Site inconnu")
+    moved = (c.host.strip().lower(), c.port_http, c.brand, c.username) != \
+            (old["host"].strip().lower(), old["port_http"], old["brand"], old["username"])
+    if moved and c.password is None and old["password_enc"]:
+        # le mot de passe enregistré n'est envoyé qu'à l'équipement pour lequel il a été saisi
+        raise HTTPException(400, "Adresse, port, marque ou utilisateur changés : ressaisir le mot de passe")
+    if c.host.strip().lower() != old["host"].strip().lower() or c.site_id != old["site_id"]:
+        _one_site_per_host(c.host, c.site_id, cid)
     db.x("""UPDATE cameras SET site_id=?,name=?,brand=?,host=?,port_http=?,username=?,channel=?,enabled=?
             WHERE id=?""", (*_cam_values(c), cid))
     if c.password is not None:
@@ -346,6 +399,8 @@ class NvrIn(BaseModel):
     port_http: int = Field(80, ge=1, le=65535)
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(max_length=200)
+
+    _host = field_validator("host")(classmethod(lambda cls, v: check_device_host(v)))
 
 
 class NvrChannel(BaseModel):
@@ -408,6 +463,8 @@ class NvrCredentials(NvrHost):
 def nvr_credentials(body: NvrCredentials, request: Request):
     """Identifiants du NVR changés une fois pour toutes ses caméras ; vérifiés sur le NVR avant d'être enregistrés."""
     cams = _nvr_cams(request.state.user, body.host)
+    if body.password is None and (body.port_http, body.username) != (cams[0]["port_http"], cams[0]["username"]):
+        raise HTTPException(400, "Port ou utilisateur changés : ressaisir le mot de passe")
     pw = body.password if body.password is not None else security.decrypt(cams[0]["password_enc"])
     _discover(cams[0]["host"], body.port_http, body.username, pw)          # refusé : rien n'est modifié
     enc = security.encrypt(pw)
@@ -424,8 +481,12 @@ def add_nvr(body: NvrAdd, request: Request):
     if not db.one("SELECT id FROM sites WHERE id=?", (body.site_id,)):
         raise HTTPException(400, "Site inconnu")
     host = body.host.strip()
+    _one_site_per_host(host, body.site_id)
     if body.password is None:                                  # NVR déjà enregistré : mêmes identifiants
-        enc = _nvr_cams(request.state.user, host)[0]["password_enc"]
+        known_cam = _nvr_cams(request.state.user, host)[0]
+        if (body.port_http, body.username) != (known_cam["port_http"], known_cam["username"]):
+            raise HTTPException(400, "Port ou utilisateur différents : ressaisir le mot de passe")
+        enc = known_cam["password_enc"]
     else:
         enc = security.encrypt(body.password)
     known = {r["channel"] for r in db.q("SELECT channel FROM cameras WHERE host=? AND brand='dahua'", (host,))}
@@ -502,10 +563,14 @@ def download_export(eid: int, request: Request, user: User = Me):
     row = _export(user, eid)
     if row["state"] != "pret" or not export.file(eid).is_file():
         raise HTTPException(409, "Extrait pas prêt")
+    if row["sha256"] and export._sha256(export.file(eid)) != row["sha256"]:
+        # le fichier a changé depuis sa préparation : on ne remet pas une preuve altérée
+        accounts.audit_req(request, "video.alteree", row["site_id"], f"#{eid}", "empreinte du ZIP différente")
+        raise HTTPException(409, "Extrait modifié depuis sa préparation : refaites l'extraction")
     site = db.one("SELECT name FROM sites WHERE id=?", (row["site_id"],))
     start = datetime.fromtimestamp(row["start_ts"])
     name = re.sub(r"[^\w\-]", "_", f"Video_{site['name'] if site else row['site_id']}_{start:%Y-%m-%d_%Hh%M}")
-    accounts.audit_req(request, "video.telechargement", row["site_id"], f"#{eid}")
+    accounts.audit_req(request, "video.telechargement", row["site_id"], f"#{eid}", f"SHA-256 du ZIP {row['sha256']}")
     return FileResponse(export.file(eid), media_type="application/zip", filename=f"{name}.zip")
 
 
@@ -562,7 +627,7 @@ def _alerts(user: User, include_closed: bool, limit: int) -> list[dict]:
 
 
 @router.get("/alerts")
-def list_alerts(user: User = Me, include_closed: bool = False, limit: int = 100):
+def list_alerts(user: User = Me, include_closed: bool = False, limit: int = Query(100, ge=1, le=500)):
     return _alerts(user, include_closed, limit)
 
 
@@ -590,6 +655,12 @@ def put_email(body: EmailIn, request: Request):
             mail.recipients(body.sender)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    old = mail.current()
+    if (body.password is None and old.get("password_enc")
+            and (body.host.strip().lower(), body.port, body.security, body.user.strip())
+            != (str(old.get("host", "")).lower(), old.get("port"), old.get("security"), old.get("user", ""))):
+        # le mot de passe enregistré n'est envoyé qu'au serveur d'e-mail pour lequel il a été saisi
+        raise HTTPException(400, "Serveur, port, sécurité ou identifiant changés : ressaisir le mot de passe")
     mail.save(body.host, body.port, body.security, body.user, body.password, body.sender, to)
     accounts.audit_req(request, "email.reglages", detail=f"{body.host}:{body.port} {body.security} → {', '.join(to)}"
                        + (", mot de passe changé" if body.password is not None else ""))
@@ -616,13 +687,16 @@ LOOPBACK = {"127.0.0.1", "::1"}
 
 
 @app.get("/api/fenetre")
-def popup_state(request: Request):
-    """Fenêtre d'alerte (`app.popup`, une par session Windows) : depuis ce PC seulement, sans compte.
+def popup_state(request: Request, defi: str = ""):
+    """Fenêtre d'alerte (`app.popup`, une par session Windows) : depuis ce PC seulement, sans compte ; réponse signée
+    sur le défi envoyé par la fenêtre (`fenetre`).
 
     Elle ne lit plus la base elle-même : les données sont réservées au compte système qui fait tourner le serveur."""
     if accounts.client_ip(request) not in LOOPBACK:
         raise HTTPException(404)
-    return alerting.popup_state()
+    if not fenetre.CHALLENGE_RE.match(defi):
+        raise HTTPException(400, "Défi manquant")
+    return fenetre.sign(alerting.popup_state(), defi)
 
 
 @app.get("/api/health")

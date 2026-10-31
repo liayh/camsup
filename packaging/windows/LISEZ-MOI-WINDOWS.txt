@@ -18,7 +18,7 @@ CamSup - fabriquer puis installer sur un PC Windows 10/11 (64 bits)
    - CamSup tourne ensuite en permanence sous le compte système (tâche planifiée « CamSup », lancée au démarrage du
      PC, même sans session ouverte) ; la fenêtre d'alerte s'ouvre avec chaque session Windows.
 
-4. Utiliser : icône « CamSup » (menu Démarrer ou bureau) -> le navigateur ouvre http://localhost:8080
+4. Utiliser : icône « CamSup » (menu Démarrer ou bureau) -> le navigateur ouvre http://127.0.0.1:8080
    - Se connecter : admin + le mot de passe choisi.
    - Enregistreurs et caméras > « Ajouter un enregistreur » : adresse IP du NVR (n'importe laquelle, le PC doit
      être sur le même réseau), utilisateur et mot de passe du NVR > « Se connecter au NVR » > « Toutes » > Ajouter.
@@ -32,5 +32,14 @@ C:\ProgramData\CamSup\data\secret.key. Journaux : C:\ProgramData\CamSup\data\log
 Réglages (port, etc.) : C:\ProgramData\CamSup\camsup.env, lisible par tous : n'y mettre aucun mot de passe
 (l'e-mail se règle dans Paramètres, mot de passe chiffré dans la base).
 Arrêter / redémarrer le serveur : Planificateur de tâches > « CamSup » (ou redémarrer le PC).
+
+Mise à jour depuis la 1.0 (données alors lisibles et modifiables par tous les comptes du poste) :
+  - changer le mot de passe des NVR (puis Enregistreurs et caméras > identifiants) et celui de l'e-mail ;
+  - Utilisateurs : vérifier qu'aucun compte inconnu n'existe ; changer le mot de passe « admin ».
+  Les sessions ouvertes sont fermées à la mise à jour.
+Si un dossier C:\ProgramData\CamSup.suspect-<date> apparaît : il existait avant la première installation (créé par
+un autre compte du poste) et n'a pas été utilisé ; l'examiner puis le supprimer.
+camsup.env : seuls les réglages sans danger y sont lus (délais, port, e-mail sans mot de passe…) ; chemins, adresse
+d'écoute et secrets y sont ignorés.
 Désinstaller : Paramètres Windows > Applications > CamSup (les données de C:\ProgramData\CamSup restent ;
 les supprimer à la main pour repartir de zéro).

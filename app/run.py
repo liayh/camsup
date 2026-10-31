@@ -128,7 +128,9 @@ def open_interface(wait: float = 0) -> bool:
         if time.time() >= end:
             return False
         time.sleep(1)
-    webbrowser.open(f"{'https' if config.HTTPS else 'http'}://localhost:{config.PORT}/")
+    # 127.0.0.1 plutôt que « localhost » : le navigateur pourrait essayer d'abord ::1, où un autre programme du poste
+    # pourrait écouter et recevoir le cookie de session
+    webbrowser.open(f"{'https' if config.HTTPS else 'http'}://127.0.0.1:{config.PORT}/")
     return True
 
 
@@ -139,7 +141,10 @@ def main(popups: bool | None = None, browser: bool = True) -> None:
     if server_running():
         if browser:
             open_interface()
-        return
+            return
+        # service : le port est pris par un autre programme ; on ne s'arrête pas sans bruit (code ≠ 0, relancé)
+        log.error("Port %s déjà occupé par un autre programme : CamSup ne peut pas démarrer", config.PORT)
+        sys.exit(3)
     popup = PopupProcess() if (config.POPUPS if popups is None else popups) else None
     if popup:
         from . import db
@@ -161,8 +166,43 @@ def _serve() -> None:
         kw = {"ssl_certfile": str(cert), "ssl_keyfile": str(key)}
     # timeout_graceful_shutdown : sans lui, un flux vidéo ouvert (WebSocket) bloque l'arrêt indéfiniment
     from .main import app                      # objet direct : fonctionne aussi dans le programme empaqueté
-    uvicorn.run(app, host=config.HOST, port=config.PORT, workers=1, proxy_headers=False,
-                timeout_graceful_shutdown=10, access_log=not config.FROZEN, **kw)   # poste Windows : pas de ligne par requête
+    opts = dict(host=config.HOST, port=config.PORT, workers=1, proxy_headers=False, timeout_graceful_shutdown=10,
+                access_log=not config.FROZEN, **kw)                       # poste Windows : pas de ligne par requête
+    if config.HOST not in ("127.0.0.1", "localhost"):
+        uvicorn.run(app, **opts)
+        return
+    socks = local_sockets(config.PORT)
+    uvicorn.Server(uvicorn.Config(app, **opts)).run(sockets=socks)
+
+
+def local_sockets(port: int) -> list[socket.socket]:
+    """Écoute sur 127.0.0.1 et ::1, en exclusif sous Windows (SO_EXCLUSIVEADDRUSE) : aucun autre programme du poste
+    ne peut écouter sur le même port en même temps (ni sur ::1, que le navigateur essaie parfois pour « localhost »)."""
+    socks = []
+    for family, addr in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        try:
+            s = socket.socket(family, socket.SOCK_STREAM)
+        except OSError:
+            continue                                   # IPv6 absent
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if family == socket.AF_INET6:
+            s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        try:
+            s.bind((addr, port))
+        except OSError as e:
+            s.close()
+            if family == socket.AF_INET:
+                log.error("Port %s déjà occupé (%s) : CamSup ne peut pas démarrer", port, e)
+                sys.exit(3)
+            log.error("Port %s sur ::1 occupé par un autre programme (%s) : ouvrir http://127.0.0.1:%s", port, e, port)
+            continue
+        s.listen(2048)
+        s.set_inheritable(True)
+        socks.append(s)
+    return socks
 
 
 if __name__ == "__main__":

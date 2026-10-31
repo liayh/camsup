@@ -15,6 +15,7 @@ import logging
 import re
 import shutil
 import subprocess
+import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -28,6 +29,10 @@ from . import config, db, devicehttp, nvrwatch, security
 log = logging.getLogger("export")
 DIR = config.DATA_DIR / "exports"
 MB_PER_MINUTE = 40          # place à prévoir par caméra et par minute (mesuré : 23 Mo/min en 5 Mpx H.265)
+DISK_RESERVE = 2e9          # octets laissés libres sur le disque du PC (base, journaux) par les extraits et aperçus
+DOWNLOAD_SECONDS = 900      # durée maximale du téléchargement d'une vidéo depuis le NVR
+# options d'entrée de ffmpeg : fichiers locaux seulement (pas de réseau, pas de playlist qui lirait d'autres fichiers)
+FFMPEG_INPUT = ["-protocol_whitelist", "file"]
 _pool = ThreadPoolExecutor(max_workers=1)
 DAY = "%d/%m/%Y à %H:%M:%S"
 
@@ -54,7 +59,7 @@ def create(user, site_id: int, cams: list[dict], start_ts: int, end_ts: int, rea
         raise ExportError("Un extrait est déjà en préparation : attendez qu'il soit prêt")
     DIR.mkdir(parents=True, exist_ok=True)
     need = minutes * len(cams) * MB_PER_MINUTE * 2e6          # vidéo d'origine + copie MP4 pendant la conversion
-    free = shutil.disk_usage(DIR).free
+    free = shutil.disk_usage(DIR).free - DISK_RESERVE
     if free < need:
         raise ExportError(f"Pas assez de place sur le disque de l'ordinateur ({free / 1e9:.1f} Go libres, "
                           f"{need / 1e9:.1f} Go nécessaires)")
@@ -85,6 +90,21 @@ def purge() -> None:
         delete(r["id"])
 
 
+def max_bytes(start: datetime, end: datetime) -> int:
+    """Taille au-delà de laquelle la vidéo reçue n'est pas crédible (×3 sur le débit prévu) : un NVR qui envoie sans
+    fin ne doit pas remplir le disque du PC."""
+    return int(max(60.0, (end - start).total_seconds()) / 60 * MB_PER_MINUTE * 3e6) + 50_000_000
+
+
+def check_video(path: Path) -> None:
+    """Vidéo binaire attendue (DHAV, MPEG-TS…) : un fichier texte serait une liste de lecture (ffconcat, HLS) qui
+    ferait lire à ffmpeg d'autres fichiers du PC (aperçus d'un autre site, autre caméra du même extrait)."""
+    with open(path, "rb") as fh:
+        head = fh.read(256)
+    if not head or all(b in b"\t\n\r" or 32 <= b < 127 for b in head):
+        raise ExportError("la vidéo reçue du NVR n'est pas une vidéo")
+
+
 def _download(cam: dict, pw: str, start: datetime, end: datetime, dest: Path) -> None:
     f = lambda d: quote(d.strftime(nvrwatch.FMT))                         # noqa: E731
     url = (f"http://{cam['host']}:{cam['port_http']}/cgi-bin/loadfile.cgi?action=startLoad&channel={cam['channel']}"
@@ -95,17 +115,24 @@ def _download(cam: dict, pw: str, start: datetime, end: datetime, dest: Path) ->
         if r.status_code == 401:
             raise ExportError("le NVR refuse l'identifiant enregistré dans CamSup")
         r.raise_for_status()
+        limit, deadline, size = max_bytes(start, end), time.time() + DOWNLOAD_SECONDS, 0
         with open(dest, "wb") as fh:
             for chunk in r.iter_content(1 << 20):
                 fh.write(chunk)
+                size += len(chunk)
+                if size > limit:
+                    raise ExportError("le NVR envoie plus de vidéo que prévu : téléchargement arrêté")
+                if time.time() > deadline:
+                    raise ExportError("téléchargement trop long : arrêté")
     if dest.stat().st_size == 0:
         raise ExportError("aucun enregistrement sur cette période")
+    check_video(dest)
 
 
 def _to_mp4(src: Path, dst: Path) -> None:
     """Image copiée telle quelle (aucun réencodage) ; le son éventuel est converti en AAC (le MP4 n'accepte pas le
     G.711 des NVR)."""
-    cmd = [config.FFMPEG, "-nostdin", "-y", "-loglevel", "error", "-i", str(src), "-map", "0:v", "-map", "0:a?",
+    cmd = [config.FFMPEG, "-nostdin", "-y", "-loglevel", "error", *FFMPEG_INPUT, "-i", str(src), "-map", "0:v", "-map", "0:a?",
            "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", str(dst)]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
@@ -122,6 +149,12 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _line(text: str) -> str:
+    """Texte sur une ligne, sans caractère de contrôle : un motif ou un nom de caméra ne doit pas pouvoir ajouter de
+    fausses lignes (empreintes, vidéos) au LISEZ-MOI."""
+    return re.sub(r"[\x00-\x1f\x7f\u2028\u2029]+", " ", text or "").strip()
 
 
 def _safe(name: str) -> str:
@@ -141,6 +174,12 @@ def _clock(offset: int) -> str:
     h, m = divmod(m, 60)
     span = (f"{h} h {m:02d} min " if h else f"{m} min " if m else "") + f"{s} s"
     return f"{'en avance' if offset > 0 else 'en retard'} de {span}"
+
+
+def _tz(ts: float) -> str:
+    """Décalage de l'heure du PC sur le temps universel à cet instant (heure d'été comprise) : « UTC+02:00 »."""
+    z = datetime.fromtimestamp(ts).astimezone().strftime("%z")
+    return f"UTC{z[:3]}:{z[3:]}"
 
 
 def _set(eid: int, **kw) -> None:
@@ -169,17 +208,19 @@ def _run(eid: int) -> None:
                 off = timedelta(seconds=offsets[cam["host"]])
                 dav, mp4 = work / f"{n}.dav", work / f"{n:02d}_{_safe(cam['name'])}.mp4"
                 _download(cam, pw, start + off, end + off, dav)
+                original = _sha256(dav)
                 _to_mp4(dav, mp4)
                 dav.unlink()
                 done.append(mp4)
                 size = f"{mp4.stat().st_size / 1e6:.1f}".replace(".", ",")
-                lines.append(f"- {mp4.name} : {cam['name']}, canal {cam['channel']} du NVR {cam['host']}, {size} Mo\n"
-                             f"  SHA-256 : {_sha256(mp4)}")
+                lines.append(f"- {mp4.name} : {_line(cam['name'])}, canal {cam['channel']} du NVR {cam['host']}, {size} Mo\n"
+                             f"  SHA-256 : {_sha256(mp4)}\n"
+                             f"  SHA-256 de la vidéo d'origine reçue du NVR (.dav, avant mise en MP4) : {original}")
             except ExportError as e:
-                lines.append(f"- {cam['name']} (canal {cam['channel']}) : {e}")
+                lines.append(f"- {_line(cam['name'])} (canal {cam['channel']}) : {e}")
             except Exception as e:  # noqa: BLE001
                 log.warning("extrait %s, %s : %s", eid, cam["name"], security.scrub(str(e))[:300])
-                lines.append(f"- {cam['name']} (canal {cam['channel']}) : {nvrwatch.reason(e)}")
+                lines.append(f"- {_line(cam['name'])} (canal {cam['channel']}) : {nvrwatch.reason(e)}")
         if not done:
             raise ExportError("aucune vidéo : " + " ; ".join(l.split(" : ", 1)[1] for l in lines))
         clocks = "\n".join(f"- NVR {h} : horloge {_clock(o)} par rapport à l'ordinateur ; période à l'heure du NVR : "
@@ -187,10 +228,10 @@ def _run(eid: int) -> None:
                            for h, o in offsets.items())
         readme = f"""EXTRAIT DE VIDÉOSURVEILLANCE
 
-Pharmacie : {site['name'] if site else row['site_id']}
-Période demandée : du {start.strftime(DAY)} au {end.strftime(DAY)} (heure de l'ordinateur de la pharmacie)
-Motif / référence : {row['reason'] or 'non renseigné'}
-Extrait réalisé le {datetime.now().strftime(DAY)} par « {row['username']} » avec CamSup.
+Pharmacie : {_line(site['name']) if site else row['site_id']}
+Période demandée : du {start.strftime(DAY)} au {end.strftime(DAY)} (heure de l'ordinateur de la pharmacie, {_tz(row['start_ts'])})
+Motif / référence : {_line(row['reason']) or 'non renseigné'}
+Extrait réalisé le {datetime.now().strftime(DAY)} ({_tz(time.time())}) par « {row['username']} » avec CamSup.
 
 Heure : l'heure incrustée dans l'image est celle du NVR.
 {clocks}

@@ -11,7 +11,18 @@ import sys
 from pathlib import Path
 
 
-def _load_env_file(path: Path) -> None:
+# Programme Windows : `camsup.env` est lisible (et, avant la 1.1, modifiable) par tous les comptes du poste ; le serveur
+# tourne sous le compte système. Seuls ces réglages sans danger y sont lus : ni chemins (données, ffmpeg), ni adresse
+# d'écoute, ni proxy, ni secrets (le mot de passe d'e-mail se saisit dans Paramètres, chiffré dans la base).
+SAFE_KEYS = {"CHECK_INTERVAL", "OFFLINE_ALERT_SECONDS", "HDD_CHECK_SECONDS", "CAMERA_CHECK_SECONDS",
+             "CAMERA_STALL_SECONDS", "NVR_FAILS", "NVR_BOOT_GRACE_SECONDS", "RECORD_STALE_MINUTES", "POPUPS",
+             "POPUP_REMIND_HOURS", "EXPORT_MAX_MINUTES", "EXPORT_RETENTION_DAYS", "ADMIN_USER", "PORT",
+             "SESSION_HOURS", "AUDIT_RETENTION_DAYS", "WEBHOOK_URL", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_FROM",
+             "ALERT_EMAIL_TO", "ALLOWED_HOSTS"}
+
+
+def _load_env_file(path: Path, allowed: set[str] | None = None) -> None:
+    """`CLÉ=valeur` par ligne → variables d'environnement (sans écraser l'existant) ; `allowed` : seulement ces clés."""
     try:
         text = path.read_text(encoding="utf-8-sig")                     # « -sig » : fichier écrit avec BOM
     except OSError:                    # absent, ou réservé aux administrateurs (fenêtre d'alerte d'un utilisateur)
@@ -21,15 +32,35 @@ def _load_env_file(path: Path) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
+        key = key.strip()
+        if allowed is not None and key not in allowed:
+            continue
         value = value.split(" #", 1)[0].strip().strip('"').strip("'")
-        os.environ.setdefault(key.strip(), value)
+        os.environ.setdefault(key, value)
 
 
+VERSION = "1.1.0"
 FROZEN = bool(getattr(sys, "frozen", False))
 APP_DIR = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent.parent
 HOME = Path(os.getenv("PROGRAMDATA", "C:/ProgramData")) / "CamSup" if FROZEN else APP_DIR
 ENV_FILE = Path(os.getenv("CAMSUP_ENV", HOME / ("camsup.env" if FROZEN else ".env")))
-_load_env_file(ENV_FILE)
+_load_env_file(ENV_FILE, SAFE_KEYS if FROZEN else None)
+
+
+def is_link(p: Path) -> bool:
+    """Lien symbolique ou jonction (point d'analyse NTFS)."""
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return False
+    return p.is_symlink() or bool(getattr(st, "st_file_attributes", 0) & 0x400)   # FILE_ATTRIBUTE_REPARSE_POINT
+
+
+if FROZEN:
+    # un dossier de données remplacé par une jonction ferait lire, écrire ou effacer ailleurs par le compte système
+    for _d in (HOME, HOME / "data", *(HOME / "data" / n for n in ("logs", "previews", "exports", "tls"))):
+        if is_link(_d):
+            raise SystemExit(f"CamSup : {_d} est un lien (jonction) : refusé, prévenir l'installateur")
 
 
 def forget_admin_password() -> None:
@@ -43,13 +74,15 @@ def forget_admin_password() -> None:
             ENV_FILE.write_text("\n".join(kept) + "\n", encoding="utf-8")
 
 
-DATA_DIR = Path(os.getenv("DATA_DIR", HOME / "data" if FROZEN else "./data")).resolve()
+DATA_DIR = (HOME / "data") if FROZEN else Path(os.getenv("DATA_DIR", "./data")).resolve()
 LOG_DIR = DATA_DIR / "logs"
 DB_PATH = DATA_DIR / "camsup.db"
+# clé publique du serveur, lue par la fenêtre d'alerte (`fenetre`) : lisible par tous, modifiable par le serveur seul
+POPUP_PUBKEY = (HOME / "fenetre.pub") if FROZEN else (DATA_DIR / "fenetre.pub")
 # programme Windows : mot de passe admin saisi à l'installation, dans data/ (réservé au système et aux administrateurs)
 INSTALL_FILE = DATA_DIR / "installation.env"
 if FROZEN:
-    _load_env_file(INSTALL_FILE)
+    _load_env_file(INSTALL_FILE, {"ADMIN_PASSWORD"})
 
 # Surveillance
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "5"))                   # tour de la boucle de surveillance
@@ -79,12 +112,15 @@ FFMPEG = str(_BUNDLED_FFMPEG) if FROZEN else os.getenv("FFMPEG", str(_BUNDLED_FF
 # Accès web
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")       # compte intégrateur créé au premier démarrage (base vide)
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")  # vide => généré et affiché au démarrage
-HOST = os.getenv("HOST", "127.0.0.1" if FROZEN else "0.0.0.0")
+HOST = "127.0.0.1" if FROZEN else os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
 HTTPS = os.getenv("HTTPS", "0" if FROZEN else "1") not in ("0", "false", "non")  # certificat auto-signé si TLS_CERT/TLS_KEY absents
 TLS_CERT = os.getenv("TLS_CERT", "")
 TLS_KEY = os.getenv("TLS_KEY", "")
 SESSION_HOURS = int(os.getenv("SESSION_HOURS", "12"))
+# noms par lesquels on peut joindre l'interface (en-tête Host) ; « * » = tous. Programme Windows : ce PC seulement.
+ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost,::1" if FROZEN else "*").split(",")
+                 if h.strip()]
 AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "365"))
 
 # Notifications

@@ -3,10 +3,12 @@
 Les URL sont construites en `http://hôte:port_http`. Si ce port ne répond plus (service HTTP du NVR arrêté,
 HTTP désactivé au profit du HTTPS…), on essaie le HTTPS sur les ports courants (443, 8080, 8443) et on retient
 celui qui répond, pendant `CACHE_SECONDS`. Certificats auto-signés acceptés (verify=False) : réseau local / VPN.
+Redirections : suivies seulement vers le même hôte (le NVR renvoie son CGI vers HTTPS) ; jamais vers un autre, qui
+recevrait la réponse d'authentification (ou servirait à joindre une autre machine depuis le poste).
 """
 import threading
 import time
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 import urllib3
@@ -48,13 +50,35 @@ def https_variant(url: str) -> str | None:
     return urlunsplit((b.scheme, b.netloc, u.path, u.query, u.fragment))
 
 
+MAX_REDIRECTS = 3
+
+
+def _send(method: str, url: str, **kw) -> requests.Response:
+    """Requête dont les redirections ne sont suivies que vers le même hôte."""
+    host = urlsplit(url).hostname
+    for _ in range(MAX_REDIRECTS + 1):
+        r = requests.request(method, url, allow_redirects=False, **kw)
+        if not r.is_redirect:
+            return r
+        nxt = urljoin(url, r.headers.get("Location", ""))
+        if urlsplit(nxt).hostname != host or urlsplit(nxt).scheme not in ("http", "https"):
+            r.close()
+            raise requests.ConnectionError(f"redirection vers un autre équipement refusée ({urlsplit(nxt).hostname})")
+        r.close()
+        url = nxt
+    raise requests.ConnectionError("trop de redirections")
+
+
 def request(method: str, url: str, **kw) -> requests.Response:
     """Comme `requests.request`, avec repli HTTPS si la connexion HTTP échoue (refusée, injoignable)."""
     kw.setdefault("verify", False)
+    kw.pop("allow_redirects", None)
     try:
-        return requests.request(method, url, **kw)
-    except (requests.ConnectionError, requests.Timeout):
+        return _send(method, url, **kw)
+    except (requests.ConnectionError, requests.Timeout) as e:
+        if "redirection" in str(e):
+            raise
         alt = https_variant(url)
         if not alt:
             raise
-        return requests.request(method, alt, **kw)
+        return _send(method, alt, **kw)

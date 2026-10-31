@@ -27,6 +27,7 @@ MINUTES = 5
 KEEP_SECONDS = 3600
 MODES = ("copie", "conversion")
 MAX_PENDING = 8                             # aperçus en attente ou en cours, tous utilisateurs : au-delà, refusé
+MAX_TOTAL_BYTES = 3e9                       # aperçus prêts gardés sur le disque : au-delà, les plus anciens sont effacés
 _pool = ThreadPoolExecutor(max_workers=2)
 _lock = threading.Lock()
 _jobs: dict[str, dict] = {}                 # « caméra-début » → état de l'aperçu
@@ -55,10 +56,27 @@ def request(cam: dict, start_ts: int, mode: str = "conversion") -> dict:
             return public(job)
         if sum(j["state"] in ("attente", "en_cours") for j in _jobs.values()) >= MAX_PENDING:
             raise export.ExportError("Trop de vidéos en préparation : réessayez dans un instant")
+        _trim()
+        DIR.mkdir(parents=True, exist_ok=True)
+        if shutil.disk_usage(DIR).free - export.DISK_RESERVE < MINUTES * export.MB_PER_MINUTE * 2e6:
+            raise export.ExportError("Pas assez de place sur le disque de l'ordinateur pour afficher la vidéo")
         job = _jobs[key] = {"id": key, "camera_id": cam["id"], "site_id": cam["site_id"], "start_ts": start_ts,
                             "end_ts": start_ts + MINUTES * 60, "mode": mode, "state": "attente", "error": "", "used": time.time()}
     _pool.submit(_run, job, cam)
     return public(job)
+
+
+def _trim() -> None:
+    """Aperçus prêts au-delà de `MAX_TOTAL_BYTES` : les moins récemment demandés sont effacés (verrou tenu)."""
+    ready = sorted((j for j in _jobs.values() if j["state"] == "pret"), key=lambda j: j["used"])
+    sizes = {j["id"]: (path(j["id"]).stat().st_size if path(j["id"]).is_file() else 0) for j in ready}
+    total = sum(sizes.values())
+    for j in ready:
+        if total <= MAX_TOTAL_BYTES:
+            break
+        _jobs.pop(j["id"], None)
+        path(j["id"]).unlink(missing_ok=True)
+        total -= sizes[j["id"]]
 
 
 def get(key: str) -> dict | None:
@@ -77,13 +95,15 @@ def _low_priority() -> dict:
 
 def _run(job: dict, cam: dict) -> None:
     job["state"] = "en_cours"
-    DIR.mkdir(parents=True, exist_ok=True)
-    dav, tmp = DIR / f"{job['id']}.dav", DIR / f"{job['id']}.tmp.mp4"
+    # dossier propre à l'aperçu : ffmpeg ne voit pas les aperçus des autres caméras (ni des autres sites)
+    work = DIR / f"{job['id']}.tmp"
+    work.mkdir(parents=True, exist_ok=True)
+    dav, tmp = work / "nvr.dav", work / "apercu.mp4"
     try:
         pw = security.decrypt(cam["password_enc"])
         start = datetime.fromtimestamp(job["start_ts"]) + timedelta(seconds=export._offset(cam, pw))
         export._download(cam, pw, start, start + timedelta(minutes=MINUTES), dav)
-        head = [config.FFMPEG, "-nostdin", "-y", "-loglevel", "error", "-i", str(dav), "-an"]
+        head = [config.FFMPEG, "-nostdin", "-y", "-loglevel", "error", *export.FFMPEG_INPUT, "-i", str(dav), "-an"]
         tail = ["-movflags", "+faststart", str(tmp)]
         if job["mode"] == "copie":
             # « hvc1 » : étiquette H.265 attendue par les navigateurs ; refusée si la caméra filme en H.264
@@ -109,8 +129,7 @@ def _run(job: dict, cam: dict) -> None:
         log.warning("aperçu %s : %s", job["id"], security.scrub(str(e))[:300])
         job.update(state="erreur", error=nvrwatch.reason(e))
     finally:
-        dav.unlink(missing_ok=True)
-        tmp.unlink(missing_ok=True)
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def purge(everything: bool = False) -> None:

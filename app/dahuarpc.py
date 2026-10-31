@@ -8,6 +8,7 @@ connexions / déconnexions par heure dans le journal du NVR (vu le 30/10/2026) e
 """
 import contextlib
 import hashlib
+import json
 import threading
 import time
 from itertools import count
@@ -43,14 +44,32 @@ class Session:
                 raise
             return base
         if r.is_redirect and r.headers.get("Location", "").startswith("https://"):
-            return "https://" + urlsplit(r.headers["Location"]).netloc
+            # seulement le port : un NVR (ou un tiers à sa place) ne doit pas envoyer la connexion vers un autre hôte
+            try:
+                port = urlsplit(r.headers["Location"]).port or 443
+            except ValueError:
+                port = 443
+            return f"https://{self.host}:{port}"
         return base
 
     def call(self, method: str, params=None, obj=None, path: str = "/RPC2") -> dict:
+        """Un appel RPC2. Durée totale et taille de la réponse bornées : un NVR qui répond au goutte-à-goutte ou
+        sans fin ne doit pas bloquer la surveillance (le délai de `requests` ne vaut que par lecture)."""
         body = {"method": method, "params": params, "id": next(self._seq), "session": self.sid}
         if obj is not None:
             body["object"] = obj
-        return self.http.post(self.base + path, json=body, timeout=self.timeout).json()
+        deadline = time.time() + self.timeout
+        with self.http.post(self.base + path, json=body, timeout=self.timeout, stream=True,
+                            allow_redirects=False) as r:
+            data = bytearray()
+            for chunk in r.iter_content(65536):
+                data += chunk
+                if len(data) > MAX_REPLY or time.time() > deadline:
+                    raise RuntimeError("réponse du NVR trop longue")
+        out = json.loads(data or b"{}")
+        if not isinstance(out, dict):
+            raise RuntimeError("réponse inattendue du NVR")
+        return out
 
     def params(self, method: str, params=None, obj=None) -> dict:
         """`params` de la réponse ; erreur si le NVR répond `result: false`."""
@@ -84,6 +103,8 @@ class Session:
         self.http.close()
 
 
+MAX_REPLY = 5_000_000                   # octets : une réponse RPC2 normale fait quelques Ko
+LOCK_WAIT = 120                         # s d'attente au plus quand un autre relevé utilise déjà la session du NVR
 KEEPALIVE_AFTER = 20                    # s sans appel : on vérifie que la session est toujours valide
 _shared: dict[tuple, tuple[threading.Lock, list]] = {}
 _shared_lock = threading.Lock()
@@ -95,7 +116,9 @@ def shared(host: str, port: int, user: str, pw: str, timeout: int = 10):
     key = (host, port, user, hashlib.sha256(pw.encode()).hexdigest())
     with _shared_lock:
         lock, slot = _shared.setdefault(key, (threading.Lock(), [None, 0.0]))
-    with lock:
+    if not lock.acquire(timeout=LOCK_WAIT):
+        raise RuntimeError("NVR occupé par un autre relevé")
+    try:
         s, last = slot
         if s is not None and time.time() - last > KEEPALIVE_AFTER:
             try:
@@ -116,6 +139,8 @@ def shared(host: str, port: int, user: str, pw: str, timeout: int = 10):
             slot[0] = None
             raise
         slot[1] = time.time()
+    finally:
+        lock.release()
 
 
 def close_all() -> None:

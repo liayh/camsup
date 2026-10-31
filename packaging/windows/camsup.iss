@@ -13,6 +13,9 @@ AppName=CamSup
 AppVersion={#AppVersion}
 AppPublisher=CamSup
 DefaultDirName={autopf}\CamSup
+; Program Files imposé : le serveur tourne sous le compte système, son dossier ne doit être modifiable que par les
+; administrateurs (installer-tache.ps1 refuse aussi un autre dossier, /DIR= compris)
+DisableDirPage=yes
 DefaultGroupName=CamSup
 DisableProgramGroupPage=yes
 OutputDir=..\..\dist
@@ -29,10 +32,12 @@ UninstallDisplayName=CamSup
 [Languages]
 Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
 
-[Dirs]
-; droits posés par installer-tache.ps1 (data : système et administrateurs seulement)
-Name: "{commonappdata}\CamSup"
-Name: "{commonappdata}\CamSup\data"
+; %PROGRAMDATA%\CamSup et data\ : créés et protégés par installer-tache.ps1 -Preparer, avant la copie des fichiers
+
+[Registry]
+; marque d'une installation faite par un administrateur ; gardée à la désinstallation (les données restent) :
+; un dossier CamSup sans cette marque (ni installation enregistrée) a été préparé par quelqu'un d'autre
+Root: HKLM; Subkey: "Software\CamSup"; ValueType: string; ValueName: "Donnees"; ValueData: "{commonappdata}\CamSup"
 
 [Files]
 Source: "..\..\dist\CamSup\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
@@ -64,16 +69,32 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM CamSup.exe"; Flags: runhi
 [Code]
 var
   PasswordPage: TInputQueryWizardPage;
+  NeedPassword, Known, TaskFailed: Boolean;
 
 function InstallFile: String;
 begin
   Result := ExpandConstant('{commonappdata}\CamSup\data\installation.env');
 end;
 
-function FirstInstall: Boolean;
+function PowerShell: String;
 begin
-  { mise à jour : le compte intégrateur existe déjà (base présente) }
-  Result := not FileExists(ExpandConstant('{commonappdata}\CamSup\data\camsup.db'));
+  Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+end;
+
+function KnownInstall: Boolean;
+begin
+  { installation faite par un administrateur (clés réservées aux administrateurs) ; un fichier ne suffit pas : un
+    compte ordinaire peut créer %PROGRAMDATA%\CamSup et y déposer une base avec son propre compte }
+  Result := RegKeyExists(HKLM64, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F1C2B7E-3D4A-4E8B-9C21-CA5A0B1E0D11}_is1')
+            or RegKeyExists(HKLM64, 'Software\CamSup');
+end;
+
+function InitializeSetup: Boolean;
+begin
+  Known := KnownInstall;
+  { pas d'installation connue : dossier existant mis de côté, donc compte à créer ; sinon, compte déjà créé si la base existe }
+  NeedPassword := (not Known) or not FileExists(ExpandConstant('{commonappdata}\CamSup\data\camsup.db'));
+  Result := True;
 end;
 
 procedure InitializeWizard;
@@ -90,19 +111,27 @@ end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := (PageID = PasswordPage.ID) and not FirstInstall;
+  Result := (PageID = PasswordPage.ID) and not NeedPassword;
+end;
+
+function PasswordProblem(const Pw: String): String;
+begin
+  Result := '';
+  if Length(Pw) < 10 then
+    Result := 'Le mot de passe doit faire 10 caractères au moins.'
+  else if (Pos('#', Pw) > 0) or (Pos('"', Pw) > 0) or (Pos('''', Pw) > 0) then
+    Result := 'Le mot de passe ne doit contenir ni # ni guillemets.';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Problem: String;
 begin
   Result := True;
   if CurPageID = PasswordPage.ID then begin
-    if Length(PasswordPage.Values[0]) < 10 then begin
-      MsgBox('Le mot de passe doit faire 10 caractères au moins.', mbError, MB_OK);
-      Result := False;
-    end else if (Pos('#', PasswordPage.Values[0]) > 0) or (Pos('"', PasswordPage.Values[0]) > 0) or
-                (Pos('''', PasswordPage.Values[0]) > 0) then begin
-      MsgBox('Le mot de passe ne doit contenir ni # ni guillemets.', mbError, MB_OK);
+    Problem := PasswordProblem(PasswordPage.Values[0]);
+    if Problem <> '' then begin
+      MsgBox(Problem, mbError, MB_OK);
       Result := False;
     end else if PasswordPage.Values[0] <> PasswordPage.Values[1] then begin
       MsgBox('Les deux mots de passe sont différents.', mbError, MB_OK);
@@ -114,11 +143,25 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Code: Integer;
+  Params: String;
 begin
+  Result := '';
+  { aussi en installation silencieuse (/MOTDEPASSE=), où la page n'est pas validée }
+  if NeedPassword then begin
+    Result := PasswordProblem(PasswordPage.Values[0]);
+    if Result <> '' then
+      exit;
+  end;
   { mise à jour : serveur (tâche planifiée) et fenêtres d'alerte arrêtés avant de remplacer les fichiers }
   Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN CamSup', '', SW_HIDE, ewWaitUntilTerminated, Code);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM CamSup.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
-  Result := '';
+  { dossier de données sûr AVANT d'y écrire quoi que ce soit (mot de passe d'installation compris) }
+  ExtractTemporaryFile('installer-tache.ps1');
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\installer-tache.ps1') + '" -Preparer';
+  if not Known then
+    Params := Params + ' -Neuf';
+  if not Exec(PowerShell, Params, '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
+    Result := 'Le dossier de données de CamSup n''a pas pu être protégé (code ' + IntToStr(Code) + ').';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -128,16 +171,25 @@ var
 begin
   if CurStep <> ssPostInstall then
     exit;
-  { lu par CamSup au premier démarrage puis effacé (config.forget_admin_password) ; dans data\, que les droits posés
-    juste après réservent au système et aux administrateurs }
-  if FirstInstall and (PasswordPage.Values[0] <> '') then begin
+  { lu par CamSup au premier démarrage puis effacé (config.forget_admin_password) ; data\ est déjà protégé }
+  if NeedPassword and (PasswordPage.Values[0] <> '') then begin
     SetArrayLength(Lines, 1);
     Lines[0] := 'ADMIN_PASSWORD=' + PasswordPage.Values[0];
     SaveStringsToUTF8File(InstallFile, Lines, False);
   end;
-  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-              '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\installer-tache.ps1') + '"',
-              '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
+  if not Exec(PowerShell, '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\installer-tache.ps1') + '"',
+              '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then begin
+    TaskFailed := True;
     SuppressibleMsgBox('Le démarrage automatique de CamSup n''a pas pu être configuré (code ' + IntToStr(Code) +
                        '). Prévenez votre installateur.', mbError, MB_OK, IDOK);
+  end;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  { déploiement silencieux : l'échec doit se voir (sinon le poste semble installé, sans surveillance) }
+  if TaskFailed then
+    Result := 10
+  else
+    Result := 0;
 end;

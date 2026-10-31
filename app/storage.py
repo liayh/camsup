@@ -26,14 +26,17 @@ _state: dict[tuple, dict] = {}
 _lock = threading.Lock()
 
 
-def device_get(url: str, user: str, pw: str, raw: bool = False, timeout: int = 10):
+def device_get(url: str, user: str, pw: str, raw: bool = False, timeout: int = 10, basic: bool = False):
+    """GET authentifié (Digest). `basic=True` (Hikvision anciens) : repli sur l'authentification Basic, qui envoie le
+    mot de passe tel quel, seulement si la réponse vient en HTTPS ; jamais en HTTP clair."""
     # verify=False : les enregistreurs ont un certificat auto-signé (Dahua redirige le CGI de stockage vers HTTPS)
-    for auth in (HTTPDigestAuth(user, pw), HTTPBasicAuth(user, pw)):
-        r = devicehttp.request("GET", url, auth=auth, timeout=timeout)    # repli HTTPS si le HTTP ne répond plus
-        if r.status_code != 401:
-            r.raise_for_status()
-            return r.content if raw else r.text
-    raise RuntimeError("Authentification refusée (401)")
+    r = devicehttp.request("GET", url, auth=HTTPDigestAuth(user, pw), timeout=timeout)   # repli HTTPS si besoin
+    if r.status_code == 401 and basic and r.url.startswith("https://"):
+        r = devicehttp.request("GET", r.url, auth=HTTPBasicAuth(user, pw), timeout=timeout)
+    if r.status_code == 401:
+        raise RuntimeError("Authentification refusée (401)")
+    r.raise_for_status()
+    return r.content if raw else r.text
 
 
 # Attributs SMART surveillés : valeur brute > 0 = secteurs abîmés ou erreurs de liaison (câble SATA)
@@ -71,7 +74,7 @@ def _disk(name: str, state: str, state_ok: bool, total: int, used: int, **extra)
 
 
 def _hik(host: str, port: int, user: str, pw: str) -> list[dict]:
-    root = ET.fromstring(device_get(f"http://{host}:{port}/ISAPI/ContentMgmt/Storage", user, pw))
+    root = ET.fromstring(device_get(f"http://{host}:{port}/ISAPI/ContentMgmt/Storage", user, pw, basic=True))
     for el in root.iter():                      # retire les espaces de noms XML
         el.tag = el.tag.split("}")[-1]
     disks = []
@@ -83,7 +86,7 @@ def _hik(host: str, port: int, user: str, pw: str) -> list[dict]:
                   total, max(0, total - free), model=(h.findtext("model") or "").strip())
         try:                                    # SMART : pas fourni par tous les modèles
             sm = ET.fromstring(device_get(f"http://{host}:{port}/ISAPI/ContentMgmt/Storage/hdd/{h.findtext('id')}"
-                                    "/SMARTTest/status", user, pw))
+                                    "/SMARTTest/status", user, pw, basic=True))
             for el in sm.iter():
                 el.tag = el.tag.split("}")[-1]
             if sm.findtext("temprature") or sm.findtext("temperature"):
@@ -211,8 +214,21 @@ def _poll(key: tuple, cams: list[dict]) -> None:
             alerting.clear_alert(f"hdd:{host}")
 
 
+_running = threading.Lock()
+
+
 def check(cams: list[dict]) -> None:
-    """Interroge chaque équipement (en parallèle) et oublie ceux qui ne sont plus configurés."""
+    """Interroge chaque équipement (en parallèle) et oublie ceux qui ne sont plus configurés. Ne fait rien si le
+    relevé précédent n'est pas fini (un NVR lent ne doit pas empiler les relevés)."""
+    if not _running.acquire(blocking=False):
+        return
+    try:
+        _check(cams)
+    finally:
+        _running.release()
+
+
+def _check(cams: list[dict]) -> None:
     wanted: dict[tuple, list[dict]] = {}
     for c in cams:
         if not c["host"]:

@@ -1,6 +1,6 @@
 """Point d'entrée de CamSup.exe (PyInstaller).
 
-- `CamSup.exe --serveur` : surveillance + interface web (http://localhost:8080), lancé au démarrage du PC sous le
+- `CamSup.exe --serveur` : surveillance + interface web (http://127.0.0.1:8080), lancé au démarrage du PC sous le
   compte système par la tâche planifiée « CamSup » (`installer-tache.ps1`) ; relance le serveur s'il s'arrête.
   Les données (%PROGRAMDATA%\\CamSup\\data) sont réservées au système et aux administrateurs.
 - `CamSup.exe --popup` : fenêtre d'alerte, lancée à l'ouverture de chaque session Windows ; elle interroge le
