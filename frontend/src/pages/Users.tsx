@@ -3,7 +3,7 @@ import { del, post, put } from "../api/client";
 import type { Role, Site, UserRow } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { useAction } from "../components/Toast";
-import { Badge, ErrorState, Loading, Modal, Notice, PageHeader } from "../components/ui";
+import { Badge, ErrorState, Loading, Modal } from "../components/ui";
 import { fmtDateTime, ROLE_LABEL } from "../format";
 import { useApi } from "../hooks/useApi";
 
@@ -36,6 +36,7 @@ function UserForm({ user, sites, onDone }: { user: UserRow | null; sites: Site[]
   );
 }
 
+/** Comptes et droits : section de Paramètres, réservée à l'intégrateur. */
 export default function Users() {
   const { me } = useAuth();
   const users = useApi<UserRow[]>("/users");
@@ -46,10 +47,11 @@ export default function Users() {
   if (users.error && !users.data) return <ErrorState message={users.error} onRetry={users.reload} />;
   const siteName = new Map((sites.data ?? []).map((s) => [s.id, s.name]));
   return (
-    <>
-      <PageHeader title="Utilisateurs et permissions"><button className="btn primary" onClick={() => setEdit("new")}>Nouveau compte</button></PageHeader>
-      <Notice>Les droits sont vérifiés par le serveur sur chaque requête : un pharmacien ne voit jamais les équipements, alertes ou journaux d’une autre pharmacie.</Notice>
-      <table className="card"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Périmètre</th><th>Dernière connexion</th><th /></tr></thead>
+    <section className="card">
+      <div className="row"><h2>Utilisateurs et permissions</h2><span className="grow" />
+        <button className="btn primary small" onClick={() => setEdit("new")}>Nouveau compte</button></div>
+      <p className="muted small">Les droits sont vérifiés par le serveur sur chaque requête : un pharmacien ne voit jamais les équipements, alertes ou journaux d’une autre pharmacie.</p>
+      <table><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Périmètre</th><th>Dernière connexion</th><th /></tr></thead>
         <tbody>{(users.data ?? []).map((u) => (
           <tr key={u.id}><td><b>{u.username}</b> {!u.active && <Badge tone="muted">désactivé</Badge>}</td><td>{ROLE_LABEL[u.role]}</td>
             <td>{u.role === "integrator" ? <span className="muted">tout</span> :
@@ -62,6 +64,6 @@ export default function Users() {
       {edit && <Modal wide title={edit === "new" ? "Nouveau compte" : `Modifier « ${edit.username} »`} onClose={() => setEdit(null)}>
         <UserForm user={edit === "new" ? null : edit} sites={sites.data ?? []} onDone={() => { setEdit(null); users.reload(); }} />
       </Modal>}
-    </>
+    </section>
   );
 }

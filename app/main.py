@@ -33,6 +33,7 @@ async def lifespan(_: FastAPI):
                         config.ADMIN_USER, security.ADMIN_PASSWORD)
         elif config.FROZEN:
             config.forget_admin_password()     # saisi à l'installation : inutile (et à ne pas laisser) une fois le compte créé
+    mail.import_preset()
     monitor.start()
     yield
     monitor.stop()
@@ -249,6 +250,8 @@ def overview(user: User = Me):
         "nvr": [n for n in nvrwatch.snapshot() if user.can_site(n["site_id"])],
         "email": mail.configured(),
         "export_max_minutes": config.EXPORT_MAX_MINUTES,
+        "config_saved": ({r["key"].split(":", 1)[1]: int(r["value"]) for r in
+                          db.q("SELECT key, value FROM settings WHERE key LIKE 'nvr_config:%'")} if user.is_integrator else {}),
         "now": db.now(),
     }
 
@@ -378,6 +381,23 @@ def rescan_nvr(body: NvrHost, request: Request):
     c = _nvr_cams(request.state.user, body.host)[0]
     found = _discover(c["host"], c["port_http"], c["username"], security.decrypt(c["password_enc"]))
     return {**found, "host": c["host"], "port_http": c["port_http"], "username": c["username"], "site_id": c["site_id"]}
+
+
+@admin.get("/nvr/config")
+def nvr_config(host: str, request: Request):
+    """Configuration complète du NVR, pour le réinstaller à l'identique. Contient les identifiants des caméras IP :
+    réservé à l'intégrateur, téléchargée directement (rien n'est gardé sur le PC), journalisée."""
+    c = _nvr_cams(request.state.user, host)[0]
+    try:
+        data = nvrwatch.config_backup(c["host"], c["port_http"], c["username"], security.decrypt(c["password_enc"]))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"NVR : {nvrwatch.reason(e)}")
+    db.set_setting(f"nvr_config:{c['host']}", str(db.now()))
+    site = db.one("SELECT name FROM sites WHERE id=?", (c["site_id"],))
+    accounts.audit_req(request, "nvr.configuration", c["site_id"], c["host"])
+    name = re.sub(r"[^\w-]", "_", f"Config_NVR_{site['name'] if site else c['host']}_{datetime.now():%Y-%m-%d_%Hh%M}")
+    return Response(data, media_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.backup"', "Cache-Control": "no-store"})
 
 
 class NvrCredentials(NvrHost):
@@ -518,6 +538,27 @@ def create_preview(body: PreviewIn, request: Request, user: User = Me):
     return job
 
 
+class RecordedIn(BaseModel):
+    camera_ids: list[int] = Field(min_length=1, max_length=4)
+    start_ts: int
+    end_ts: int
+
+
+@router.post("/recordings")
+def recordings(body: RecordedIn, user: User = Me):
+    """Périodes enregistrées par le NVR (barre de temps de « Vidéo »), à l'heure du PC."""
+    cams = [_cam(user, cid) for cid in dict.fromkeys(body.camera_ids)]
+    if any(c["brand"] != "dahua" for c in cams):
+        raise HTTPException(400, "Images visibles seulement depuis un NVR Dahua")
+    if not 0 < body.end_ts - body.start_ts <= 31 * 3600:      # la journée + une tranche qui passe minuit
+        raise HTTPException(400, "Période invalide")
+    try:
+        found = preview.recorded(cams, body.start_ts, body.end_ts)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"NVR : {nvrwatch.reason(e)}")
+    return {str(k): v for k, v in found.items()}
+
+
 @router.get("/previews/{key}")
 def get_preview(key: str, user: User = Me):
     return preview.public(_preview(user, key))
@@ -532,25 +573,30 @@ def preview_video(key: str, user: User = Me):
 
 
 # ------------------------------------------------------------------ alertes
-def _alerts(user: User, include_closed: bool, limit: int) -> list[dict]:
+def _alerts(user: User, include_closed: bool, limit: int, site_id: Optional[int] = None) -> list[dict]:
     """Alertes visibles : celles des caméras de ses sites ; les alertes sans caméra pour l'intégrateur."""
     where = "WHERE 1=1" + ("" if include_closed else " AND a.closed_ts IS NULL")
     args: tuple = ()
     if not user.is_integrator:
         frag, args = accounts.site_filter(user, "c.site_id")
         where += " AND a.camera_id IS NOT NULL" + frag
-    return db.q(f"SELECT a.* FROM alerts a LEFT JOIN cameras c ON c.id=a.camera_id {where} "
-                "ORDER BY a.opened_ts DESC LIMIT ?", (*args, min(limit, 500)))
+    # pharmacie de l'alerte : celle de la caméra, ou celle du NVR pour « nvr:<hôte> » / « hdd:<hôte> »
+    sql = f"""SELECT a.*, COALESCE(c.site_id, (SELECT c2.site_id FROM cameras c2
+                  WHERE c2.host = substr(a.key, instr(a.key, ':') + 1) LIMIT 1)) AS site_id
+              FROM alerts a LEFT JOIN cameras c ON c.id=a.camera_id {where}"""
+    if site_id is not None:
+        sql, args = f"SELECT * FROM ({sql}) WHERE site_id=?", (*args, site_id)
+    return db.q(f"{sql} ORDER BY opened_ts DESC LIMIT ?", (*args, min(limit, 500)))
 
 
 @router.get("/alerts")
-def list_alerts(user: User = Me, include_closed: bool = False, limit: int = 100):
-    return _alerts(user, include_closed, limit)
+def list_alerts(user: User = Me, include_closed: bool = False, limit: int = 100, site_id: Optional[int] = None):
+    return _alerts(user, include_closed, limit, site_id)
 
 
 # ------------------------------------------------------------------ e-mail à l'installateur (intégrateur)
 class EmailIn(BaseModel):
-    host: str = Field(max_length=200)
+    host: str = Field("", max_length=200)                   # vide = déduit de l'adresse du compte (`mail.detect`)
     port: int = Field(587, ge=1, le=65535)
     security: Literal["starttls", "ssl", "aucune"] = "starttls"
     user: str = Field("", max_length=200)
@@ -570,6 +616,10 @@ def put_email(body: EmailIn, request: Request):
         to = mail.recipients(body.to)
         if body.sender:
             mail.recipients(body.sender)
+        if not body.host.strip():
+            if not body.user.strip():
+                raise ValueError("Adresse e-mail d'envoi manquante")
+            body = body.model_copy(update=mail.detect(body.user))
     except ValueError as e:
         raise HTTPException(400, str(e))
     mail.save(body.host, body.port, body.security, body.user, body.password, body.sender, to)
@@ -603,7 +653,7 @@ def health():
 SPA = STATIC / "app"
 SPA_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
            "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-_SPA_ROUTES = {"video", "sites", "cameras", "enregistreurs", "utilisateurs", "parametres"}
+_SPA_ROUTES = {"video", "sites", "cameras", "alertes", "enregistreurs", "utilisateurs", "parametres"}
 
 
 def _spa() -> Response:

@@ -22,8 +22,9 @@ import time
 from datetime import datetime, timedelta
 
 import requests
+from requests.auth import HTTPDigestAuth
 
-from . import alerting, cameras, config, dahuarpc, db, security
+from . import alerting, cameras, config, dahuarpc, db, devicehttp, security
 
 log = logging.getLogger("nvrwatch")
 FMT = "%Y-%m-%d %H:%M:%S"
@@ -37,27 +38,49 @@ _last: dict[int, str | None] = {}           # caméra → fin du dernier enregis
 _grace: dict[str, float] = {}               # hôte → fin du délai de grâce après le retour du NVR
 
 
-def _last_record(s: dahuarpc.Session, channel: int, nvr_now: datetime) -> str | None:
-    """Fin du dernier enregistrement du canal (1-based) sur 24 h, à l'heure du NVR, ou None."""
+def _files(s: dahuarpc.Session, channel: int, start: datetime, end: datetime) -> list[tuple[str, str]]:
+    """Fichiers d'enregistrement du canal (1-based) entre `start` et `end` (heure du NVR) : [(début, fin)]."""
     obj = s.call("mediaFileFind.factory.create").get("result")
     if not obj:
         raise RuntimeError("recherche d'enregistrements indisponible")
     try:
-        cond = {"condition": {"Channel": channel - 1, "StartTime": (nvr_now - timedelta(hours=24)).strftime(FMT),
-                              "EndTime": nvr_now.strftime(FMT), "Types": ["dav"]}}
-        last = None
+        cond = {"condition": {"Channel": channel - 1, "StartTime": start.strftime(FMT), "EndTime": end.strftime(FMT),
+                              "Types": ["dav"]}}
+        out = []
         if s.call("mediaFileFind.findFile", cond, obj).get("result"):
-            while True:                      # le NVR ignore l'ordre demandé : on lit tout et on garde le max
+            while True:                      # le NVR ignore l'ordre demandé : on lit tout
                 infos = (s.call("mediaFileFind.findNextFile", {"count": 100}, obj).get("params") or {}).get("infos") or []
-                for i in infos:
-                    if i.get("EndTime") and (last is None or i["EndTime"] > last):
-                        last = i["EndTime"]
+                out += [(i["StartTime"], i["EndTime"]) for i in infos if i.get("StartTime") and i.get("EndTime")]
                 if len(infos) < 100:
                     break
-        return last
+        return out
     finally:
         s.call("mediaFileFind.close", None, obj)
         s.call("mediaFileFind.destroy", None, obj)
+
+
+def _last_record(s: dahuarpc.Session, channel: int, nvr_now: datetime) -> str | None:
+    """Fin du dernier enregistrement du canal (1-based) sur 24 h, à l'heure du NVR, ou None."""
+    return max((b for _, b in _files(s, channel, nvr_now - timedelta(hours=24), nvr_now)), default=None)
+
+
+def recordings(host: str, port: int, user: str, pw: str, channels: list[int], start: datetime, end: datetime,
+               timeout: int = 20) -> dict[int, list[tuple[datetime, datetime]]]:
+    """Périodes enregistrées (fichiers jointifs fusionnés) de chaque canal entre `start` et `end`, heure du NVR."""
+    out = {}
+    with dahuarpc.shared(host, port, user, pw, timeout) as s:
+        for ch in channels:
+            merged: list[list[datetime]] = []
+            for a, b in sorted(_files(s, ch, start, end)):
+                a, b = max(datetime.strptime(a, FMT), start), min(datetime.strptime(b, FMT), end)
+                if b <= a:
+                    continue
+                if merged and (a - merged[-1][1]).total_seconds() <= 2:
+                    merged[-1][1] = max(merged[-1][1], b)
+                else:
+                    merged.append([a, b])
+            out[ch] = [(a, b) for a, b in merged]
+    return out
 
 
 def probe(host: str, port: int, user: str, pw: str, channels: list[int] | None = None, timeout: int = 20) -> dict:
@@ -92,6 +115,19 @@ def discover(host: str, port: int, user: str, pw: str) -> dict:
         channels.append({"channel": ch, "state": state, "title": title,
                          "name": f"Caméra {ch}" if not title or _GENERIC.match(title) else title})
     return {"model": model, "serial": serial, "channels": channels}
+
+
+def config_backup(host: str, port: int, user: str, pw: str) -> bytes:
+    """Fichier de configuration complet du NVR (celui de « Sauvegarde de la configuration » de son interface) :
+    JSON d'environ 1 Mo, vérifié le 31/10/2026 sur DHI-NVR5216-16P-4KS2E. Contient les identifiants des caméras IP."""
+    r = devicehttp.request("GET", f"http://{host}:{port}/cgi-bin/Config.backup?action=All",
+                           auth=HTTPDigestAuth(user, pw), timeout=(10, 60))
+    if r.status_code == 401:
+        raise RuntimeError("Authentification refusée (configuration)")
+    r.raise_for_status()
+    if not r.content.lstrip().startswith(b"{"):
+        raise RuntimeError("réponse du NVR qui n'est pas une configuration")
+    return r.content
 
 
 def _site_name(site_id: int) -> str:

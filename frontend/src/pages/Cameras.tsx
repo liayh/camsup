@@ -1,8 +1,10 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useState } from "react";
 import { del, post, put } from "../api/client";
-import type { Camera, CameraTest, NvrFound, NvrWatch, Overview, Site } from "../api/types";
+import type { Camera, CameraTest, NvrFound, NvrWatch, Site } from "../api/types";
 import { isIntegrator, useAuth } from "../auth/AuthContext";
 import { DiskHealth } from "../components/DiskHealth";
+import { NvrConfig } from "../components/NvrConfig";
+import { useCurrent } from "../components/SiteContext";
 import { useAction, useToast } from "../components/Toast";
 import { Badge, Empty, ErrorState, Loading, Modal, PageHeader } from "../components/ui";
 import { ago, fmtDateTime } from "../format";
@@ -68,9 +70,9 @@ function NvrCredentialsForm({ cam, onDone }: { cam: Camera; onDone: () => void }
 
 type Rescan = NvrFound & { host: string; port_http: number; username: string; site_id: number };
 
-function NvrWizard({ sites, existing, onDone }: { sites: Site[]; existing?: Rescan; onDone: () => void }) {
+function NvrWizard({ sites, current, existing, onDone }: { sites: Site[]; current: number; existing?: Rescan; onDone: (site: number) => void }) {
   const run = useAction();
-  const [siteId, setSiteId] = useState<number | "new">(existing?.site_id ?? sites[0]?.id ?? "new");
+  const [siteId, setSiteId] = useState<number | "new">(existing?.site_id ?? (sites.some((s) => s.id === current) ? current : sites[0]?.id) ?? "new");
   const [siteName, setSiteName] = useState("");
   const [nvr, setNvr] = useState({ host: existing?.host ?? "", port_http: existing?.port_http ?? 80,
                                    username: existing?.username ?? "admin", password: "" });
@@ -100,7 +102,7 @@ function NvrWizard({ sites, existing, onDone }: { sites: Site[]; existing?: Resc
     const channels = [...picked].sort((a, b) => a - b).map((ch) => ({ channel: ch, name: names[ch] || `Caméra ${ch}` }));
     const r = await run(() => post<{ added: number }>("/nvr", { ...nvr, password: existing ? null : nvr.password, site_id: site, channels }),
                         `${channels.length} caméra(s) ajoutée(s)`);
-    if (r) onDone();
+    if (r) onDone(site);
   }
 
   const free = found ? found.channels.filter((c) => !c.known).map((c) => c.channel) : [];
@@ -158,22 +160,24 @@ function camState(c: Camera, w: NvrWatch | undefined): [tone: "ok" | "bad" | "wa
   return state(c);
 }
 
-/** Un seul module : chaque enregistreur (NVR) avec ses disques, puis ses caméras (canaux). */
+/** « NVR et disques » de la pharmacie choisie : chaque enregistreur avec ses disques, puis ses caméras (canaux). */
 export default function Cameras() {
   const { me } = useAuth();
   const admin = isIntegrator(me);
-  const ov = useApi<Overview>("/overview", 5000);
+  const cur = useCurrent();
+  const ov = { data: cur.ov, loading: cur.loading, error: cur.error, reload: cur.reload };
   const sites = useApi<Site[]>("/sites");
   const run = useAction();
   const toast = useToast();
   const [edit, setEdit] = useState<Camera | "new" | null>(null);
   const [wizard, setWizard] = useState<Rescan | true | null>(null);
   const [creds, setCreds] = useState<Camera | null>(null);
-  const siteName = useMemo(() => new Map((sites.data ?? []).map((s) => [s.id, s.name])), [sites.data]);
+  const [rename, setRename] = useState<Site | null>(null);
 
   if (ov.loading && !ov.data) return <Loading />;
   if (ov.error && !ov.data) return <ErrorState message={ov.error} onRetry={ov.reload} />;
-  const cams = ov.data?.cameras ?? [];
+  const cams = cur.cams;
+  const here = sites.data?.find((s) => s.id === cur.site);
   const groups = new Map<string, Camera[]>();
   for (const c of cams) groups.set(`${c.brand}|${c.host}`, [...(groups.get(`${c.brand}|${c.host}`) ?? []), c]);
 
@@ -188,32 +192,45 @@ export default function Cameras() {
     const r = await run(() => post<Rescan>("/nvr/rescan", { host: c.host }));
     if (r) setWizard(r);
   };
+  // la pharmacie (site) se gère ici : son nom, et la suppression d'une pharmacie qui n'a plus de caméra
+  const renameSite = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!rename) return;
+    const name = String(new FormData(e.currentTarget).get("name")).trim();
+    if (await run(() => put(`/sites/${rename.id}`, { name, notes: rename.notes }), "Pharmacie renommée")) { setRename(null); sites.reload(); ov.reload(); }
+  };
+  const removeSite = async (s: Site) => {
+    if (confirm(`Supprimer la pharmacie « ${s.name} » (aucune caméra) ?`) && await run(() => del(`/sites/${s.id}`), "Pharmacie supprimée")) sites.reload();
+  };
   const remove = async (c: Camera) => {
     if (confirm(`Supprimer « ${c.name} » ?`) && await run(() => del(`/cameras/${c.id}`), "Caméra supprimée")) ov.reload();
   };
 
   return (
     <>
-      <PageHeader title="Enregistreurs et caméras">
+      <PageHeader title="NVR et disques" sub={cur.name}>
+        {admin && here && <button className="btn small" onClick={() => setRename(here)}>Renommer la pharmacie</button>}
+        {admin && here && !cams.length && <button className="btn small danger" onClick={() => removeSite(here)}>Supprimer la pharmacie</button>}
         {admin && <button className="btn primary" onClick={() => setWizard(true)}>Ajouter un enregistreur</button>}
         {admin && <button className="btn small" onClick={() => setEdit("new")}>Ajouter une caméra à la main</button>}
         <button className="btn small" onClick={ov.reload}>Actualiser</button>
       </PageHeader>
       {!cams.length && <Empty>Aucune caméra. {admin ? "Cliquez sur « Ajouter un enregistreur »." : ""}</Empty>}
       {[...groups.values()].map((list) => {
-        const { brand, host, site_id } = list[0];
+        const { brand, host } = list[0];
         const health = ov.data?.recorders.find((r) => r.host === host);
         const w = ov.data?.nvr.find((n) => n.host === host);
         return (
           <section key={`${brand}|${host}`} className="card">
             <div className="row"><h2>{brand === "hikvision" ? "Hikvision" : "Dahua"} · {host}
-              <span className="muted small"> · {siteName.get(site_id) ?? "—"} · {list.length} caméra(s){w ? ` · relevé il y a ${ago(w.checked)}` : ""}</span></h2>
+              <span className="muted small"> · {list.length} caméra(s){w ? ` · relevé il y a ${ago(w.checked)}` : ""}</span></h2>
               <span className="grow" />
               {admin && brand === "dahua" && <>
                 <button className="btn small" onClick={() => rescan(list[0])}>Chercher de nouvelles caméras</button>
                 <button className="btn small" onClick={() => setCreds(list[0])}>Identifiants du NVR</button></>}
             </div>
             {w?.error && <div className="error-text">Enregistreur : {w.error}</div>}
+            {admin && brand === "dahua" && <details className="small"><summary>Configuration du NVR</summary><NvrConfig host={host} site={cur.name} /></details>}
             {health?.error && !health.disks.length && <div className="error-text">Disques : {health.error}</div>}
             {health?.disks.map((d) => <DiskHealth key={d.name} d={d} />)}
             <table>
@@ -239,10 +256,18 @@ export default function Cameras() {
           </section>
         );
       })}
+      {rename && (
+        <Modal title={`Renommer « ${rename.name} »`} onClose={() => setRename(null)}>
+          <form className="form" onSubmit={renameSite}>
+            <label>Nom de la pharmacie<input name="name" required maxLength={120} defaultValue={rename.name} autoFocus /></label>
+            <button className="btn primary">Enregistrer</button>
+          </form>
+        </Modal>
+      )}
       {wizard && (
         <Modal wide title={wizard === true ? "Ajouter un enregistreur (NVR)" : `Nouvelles caméras du NVR ${wizard.host}`} onClose={() => setWizard(null)}>
-          <NvrWizard sites={sites.data ?? []} existing={wizard === true ? undefined : wizard}
-                     onDone={() => { setWizard(null); ov.reload(); sites.reload(); }} />
+          <NvrWizard sites={sites.data ?? []} current={cur.site} existing={wizard === true ? undefined : wizard}
+                     onDone={(site) => { setWizard(null); ov.reload(); sites.reload(); cur.setSite(site); }} />
         </Modal>
       )}
       {creds && (

@@ -29,6 +29,8 @@ class FakeSMTP:
         FakeSMTP.tls = True
 
     def login(self, user, pw):
+        if isinstance(FakeSMTP.fail_login, Exception):
+            raise FakeSMTP.fail_login
         if FakeSMTP.fail_login:
             raise smtplib.SMTPAuthenticationError(535, b"refus")
         FakeSMTP.logins.append((user, pw))
@@ -82,6 +84,10 @@ def test_erreur_d_envoi_lisible(env, smtp):
     smtp.fail_login = True
     r = admin.post("/api/notify/test", headers=H)
     assert r.status_code == 502 and "mot de passe d'application" in r.json()["detail"]
+    # Gmail : connexion coupée au lieu d'un refus (vu le 31/10/2026 avec le mot de passe habituel du compte)
+    smtp.fail_login = smtplib.SMTPServerDisconnected("Connection unexpectedly closed")
+    r = admin.post("/api/notify/test", headers=H)
+    assert r.status_code == 502 and "16 lettres" in r.json()["detail"] and "injoignable" not in r.json()["detail"]
     last = admin.get("/api/settings/email").json()["last"]
     assert last["ok"] is False and "mot-de-passe-application" not in last["error"]
 
@@ -96,3 +102,43 @@ def test_alerte_critique_envoyee_en_arriere_plan(env, smtp, monkeypatch):
     assert [m["Subject"] for m in smtp.sent] == ["[CamSup] 🔴 Caméra 1 n'est plus enregistrée",
                                                   "[CamSup] 🟢 Rétabli : Caméra 1 n'est plus enregistrée"]
     assert smtp.logins == []                                                              # relais sans compte
+
+
+def test_serveur_trouve_d_apres_l_adresse(env, smtp, monkeypatch):
+    """Le pharmacien ne connaît ni serveur ni port : l'adresse et le mot de passe suffisent."""
+    assert mail.detect("pharmacie@orange.fr") == {"host": "smtp.orange.fr", "port": 465, "security": "ssl"}
+    assert mail.detect("Alertes@GMAIL.com")["host"] == "smtp.gmail.com"
+    tried = []
+    monkeypatch.setattr(mail, "_answers", lambda h, p, s: tried.append((h, p)) or (h, p) == ("mail.pharma-test.fr", 587))
+    assert mail.detect("contact@pharma-test.fr") == {"host": "mail.pharma-test.fr", "port": 587, "security": "starttls"}
+    assert tried == [("smtp.pharma-test.fr", 465), ("smtp.pharma-test.fr", 587), ("mail.pharma-test.fr", 465),
+                     ("mail.pharma-test.fr", 587)]
+    monkeypatch.setattr(mail, "_answers", lambda *a: False)
+    with pytest.raises(ValueError, match="introuvable"):
+        mail.detect("x@inconnu.example")
+    admin = client("admin", config.ADMIN_PASSWORD)
+    r = admin.put("/api/settings/email", json={"user": "alertes@gmail.com", "password": "abcd efgh ijkl mnop",
+                                                "to": "installateur@exemple.fr"}, headers=H)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert (d["host"], d["port"], d["security"], d["app_password"]) == ("smtp.gmail.com", 587, "starttls", "Google")
+    r = admin.put("/api/settings/email", json={"user": "x@inconnu.example", "to": "installateur@exemple.fr"}, headers=H)
+    assert r.status_code == 400 and "Réglages avancés" in r.json()["detail"]
+
+
+def test_reglages_livres_avec_l_installateur(env, smtp, monkeypatch, tmp_path):
+    preset = tmp_path / "camsup-email.env"
+    monkeypatch.setattr(mail, "PRESET", preset)
+    preset.write_text("﻿# réglages de l'intégrateur\nSMTP_USER=alertes@free.fr\nSMTP_PASSWORD=secret-envoi\n"
+                      "ALERT_EMAIL_TO=installateur@exemple.fr\n", encoding="utf-8")
+    assert mail.import_preset() is True
+    assert not preset.exists()                                   # mot de passe en clair effacé
+    s = mail.current()
+    assert (s["host"], s["port"], s["security"], s["to"]) == ("smtp.free.fr", 465, "ssl", ["installateur@exemple.fr"])
+    assert "secret-envoi" not in db.setting("email")
+    mail.send("t", "t")
+    assert smtp.logins == [("alertes@free.fr", "secret-envoi")]
+    # réinstallation : les réglages faits depuis ne sont pas écrasés, le fichier est tout de même effacé
+    preset.write_text("SMTP_USER=autre@orange.fr\nSMTP_PASSWORD=x\nALERT_EMAIL_TO=a@exemple.fr\n", encoding="utf-8")
+    assert mail.import_preset() is False and not preset.exists()
+    assert mail.current()["host"] == "smtp.free.fr"
