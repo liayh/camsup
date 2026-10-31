@@ -49,6 +49,9 @@ def create(user, site_id: int, cams: list[dict], start_ts: int, end_ts: int, rea
         raise ExportError(f"Période trop longue : {config.EXPORT_MAX_MINUTES} min au plus par extrait")
     if start_ts > db.now():
         raise ExportError("La période demandée n'a pas encore commencé")
+    if db.one("SELECT id FROM exports WHERE state IN ('attente','en_cours') LIMIT 1"):
+        # un extrait à la fois : sans cette limite, des demandes répétées rempliraient la file (et le disque)
+        raise ExportError("Un extrait est déjà en préparation : attendez qu'il soit prêt")
     DIR.mkdir(parents=True, exist_ok=True)
     need = minutes * len(cams) * MB_PER_MINUTE * 2e6          # vidéo d'origine + copie MP4 pendant la conversion
     free = shutil.disk_usage(DIR).free

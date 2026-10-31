@@ -27,6 +27,7 @@ _basic = HTTPBasic(auto_error=False)
 _fails: dict[str, list[float]] = {}
 _flock = threading.Lock()
 LOCK_FAILS, LOCK_SECONDS = 5, 900
+IP_LOCK_FAILS = 20              # échecs depuis une même adresse, tous comptes confondus (essai de nombreux identifiants)
 
 
 # ---------------------------------------------------------------- mots de passe
@@ -43,6 +44,10 @@ def verify_password(pw: str, stored: str) -> bool:
         return hmac.compare_digest(calc.hex(), h)
     except (ValueError, TypeError):
         return False
+
+
+# vérifié quand le compte n'existe pas : même durée de réponse, on ne révèle pas quels identifiants existent
+_DUMMY_HASH = hash_password(secrets.token_urlsafe(16))
 
 
 def check_password_strength(pw: str) -> None:
@@ -93,26 +98,38 @@ def bootstrap(password: str) -> bool:
     return True
 
 
-def _locked(key: str) -> bool:
-    with _flock:
-        recent = [t for t in _fails.get(key, []) if time.time() - t < LOCK_SECONDS]
+def _recent(key: str) -> int:
+    recent = [t for t in _fails.get(key, []) if time.time() - t < LOCK_SECONDS]
+    if recent:
         _fails[key] = recent
-        return len(recent) >= LOCK_FAILS
+    else:
+        _fails.pop(key, None)
+    return len(recent)
 
 
-def _fail(key: str) -> None:
+def _locked(key: str, ip: str) -> bool:
     with _flock:
-        _fails.setdefault(key, []).append(time.time())
+        return _recent(key) >= LOCK_FAILS or _recent(f"ip|{ip}") >= IP_LOCK_FAILS
+
+
+def _fail(key: str, ip: str) -> None:
+    with _flock:
+        if len(_fails) > 10_000:                 # beaucoup d'essais : on oublie les entrées périmées
+            for k in list(_fails):
+                _recent(k)
+        now = time.time()
+        _fails.setdefault(key, []).append(now)
+        _fails.setdefault(f"ip|{ip}", []).append(now)
 
 
 def authenticate(username: str, password: str, ip: str) -> User | None:
     key = f"{username.lower()}|{ip}"
-    if _locked(key):
+    if _locked(key, ip):
         audit(None, "connexion.bloquee", obj=username, ip=ip)
         raise HTTPException(429, "Trop d'essais : réessayez dans 15 minutes")
     row = db.one("SELECT id,pw_hash FROM users WHERE username=? AND active=1", (username,))
-    if not row or not verify_password(password, row["pw_hash"]):
-        _fail(key)
+    if not verify_password(password, row["pw_hash"] if row else _DUMMY_HASH) or not row:
+        _fail(key, ip)
         audit(None, "connexion.echec", obj=username, ip=ip)
         return None
     with _flock:
@@ -131,8 +148,12 @@ def open_session(user: User, ip: str) -> str:
     return token
 
 
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def close_session(token: str) -> None:
-    db.x("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
+    db.x("DELETE FROM sessions WHERE token_hash=?", (token_hash(token),))
 
 
 def client_ip(request: Request) -> str:

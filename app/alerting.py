@@ -14,7 +14,7 @@ def _webhook(text: str) -> None:
     try:
         requests.post(config.WEBHOOK_URL, json={"text": text, "content": text, "message": text}, timeout=10)
     except Exception as e:  # noqa: BLE001
-        log.warning("Webhook en échec : %s", e)
+        log.warning("Webhook en échec : %s", type(e).__name__)   # pas le message : il contient l'URL (jeton secret)
 
 
 def notify(text: str, email: bool = True) -> None:

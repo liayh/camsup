@@ -5,6 +5,7 @@ Accès : `accounts.current_user` sur toutes les routes /api. Les ressources d'un
 """
 import logging
 import re
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -29,8 +30,11 @@ async def lifespan(_: FastAPI):
     preview.purge(everything=True)
     if accounts.bootstrap(security.ADMIN_PASSWORD):
         if security.GENERATED_PASSWORD:
-            log.warning("ADMIN_PASSWORD non défini — mot de passe généré pour '%s' : %s",
-                        config.ADMIN_USER, security.ADMIN_PASSWORD)
+            # jamais dans le journal (fichier lisible sur le poste) : seulement sur la console qui a lancé CamSup
+            log.warning("ADMIN_PASSWORD non défini : mot de passe généré pour '%s', affiché sur la console",
+                        config.ADMIN_USER)
+            if not config.FROZEN and sys.__stderr__:
+                print(f"Mot de passe de '{config.ADMIN_USER}' : {security.ADMIN_PASSWORD}", file=sys.__stderr__)
         elif config.FROZEN:
             config.forget_admin_password()     # saisi à l'installation : inutile (et à ne pas laisser) une fois le compte créé
     monitor.start()
@@ -54,6 +58,9 @@ async def security_headers(request: Request, call_next):
     return resp
 
 
+# adresse d'enregistreur : nom ou IP seulement (ni « @ », ni « / », ni « ? » qui détourneraient l'URL construite)
+HOST_RE = r"^\s*[A-Za-z0-9.\-\[\]:]+\s*$"
+
 public = APIRouter(prefix="/api")
 router = APIRouter(prefix="/api", dependencies=[Depends(accounts.current_user)])
 admin = APIRouter(prefix="/api", dependencies=[Depends(accounts.integrator)])
@@ -70,7 +77,7 @@ class CameraIn(BaseModel):
     site_id: int
     name: str = Field(min_length=1, max_length=120)
     brand: Literal["hikvision", "dahua"]
-    host: str = Field(min_length=1, max_length=200)     # adresse de l'enregistreur
+    host: str = Field(min_length=1, max_length=200, pattern=HOST_RE)     # adresse de l'enregistreur
     port_http: int = Field(80, ge=1, le=65535)
     username: str = ""
     password: Optional[str] = None          # None = inchangé en modification
@@ -128,7 +135,7 @@ def me(user: User = Me):
 
 
 class PasswordIn(BaseModel):
-    current: str
+    current: str = Field(max_length=200)
     new: str = Field(max_length=200)
 
 
@@ -139,6 +146,9 @@ def change_password(body: PasswordIn, request: Request, user: User = Me):
         raise HTTPException(400, "Mot de passe actuel incorrect")
     accounts.check_password_strength(body.new)
     db.x("UPDATE users SET pw_hash=? WHERE id=?", (accounts.hash_password(body.new), user.id))
+    # les autres sessions (autre navigateur, ancien mot de passe connu d'un tiers) sont fermées ; celle-ci reste
+    token = request.cookies.get(accounts.COOKIE) or ""
+    db.x("DELETE FROM sessions WHERE user_id=? AND token_hash<>?", (user.id, accounts.token_hash(token)))
     accounts.audit_req(request, "mot_de_passe.change", obj=user.username)
     return {"ok": True}
 
@@ -147,7 +157,7 @@ def change_password(body: PasswordIn, request: Request, user: User = Me):
 class UserIn(BaseModel):
     username: str = Field(min_length=2, max_length=80, pattern=r"^[A-Za-z0-9_.@-]+$")
     role: Literal["integrator", "pharmacist"]
-    password: Optional[str] = None          # None = inchangé en modification
+    password: Optional[str] = Field(None, max_length=200)   # None = inchangé en modification
     site_ids: list[int] = []                # rôle pharmacist : ses sites
     active: bool = True
 
@@ -189,9 +199,12 @@ def update_user(uid: int, u: UserIn, request: Request):
         raise HTTPException(404, "Compte introuvable")
     if uid == me_.id and (u.role != "integrator" or not u.active):
         raise HTTPException(400, "Vous ne pouvez pas retirer vos propres droits")
-    db.x("UPDATE users SET username=?, role=?, active=? WHERE id=?", (u.username, u.role, int(u.active), uid))
+    if db.one("SELECT id FROM users WHERE username=? AND id<>?", (u.username, uid)):
+        raise HTTPException(409, "Ce nom d'utilisateur existe déjà")
     if u.password:
         accounts.check_password_strength(u.password)
+    db.x("UPDATE users SET username=?, role=?, active=? WHERE id=?", (u.username, u.role, int(u.active), uid))
+    if u.password:
         db.x("UPDATE users SET pw_hash=? WHERE id=?", (accounts.hash_password(u.password), uid))
     if not u.active or u.password:
         db.x("DELETE FROM sessions WHERE user_id=?", (uid,))       # déconnecte le compte
@@ -324,7 +337,7 @@ def delete_camera(cid: int, request: Request):
 
 
 class NvrIn(BaseModel):
-    host: str = Field(min_length=1, max_length=200)
+    host: str = Field(min_length=1, max_length=200, pattern=HOST_RE)
     port_http: int = Field(80, ge=1, le=65535)
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(max_length=200)

@@ -26,6 +26,7 @@ DIR = config.DATA_DIR / "previews"
 MINUTES = 5
 KEEP_SECONDS = 3600
 MODES = ("copie", "conversion")
+MAX_PENDING = 8                             # aperçus en attente ou en cours, tous utilisateurs : au-delà, refusé
 _pool = ThreadPoolExecutor(max_workers=2)
 _lock = threading.Lock()
 _jobs: dict[str, dict] = {}                 # « caméra-début » → état de l'aperçu
@@ -52,6 +53,8 @@ def request(cam: dict, start_ts: int, mode: str = "conversion") -> dict:
         if job and job["state"] != "erreur":
             job["used"] = time.time()
             return public(job)
+        if sum(j["state"] in ("attente", "en_cours") for j in _jobs.values()) >= MAX_PENDING:
+            raise export.ExportError("Trop de vidéos en préparation : réessayez dans un instant")
         job = _jobs[key] = {"id": key, "camera_id": cam["id"], "site_id": cam["site_id"], "start_ts": start_ts,
                             "end_ts": start_ts + MINUTES * 60, "mode": mode, "state": "attente", "error": "", "used": time.time()}
     _pool.submit(_run, job, cam)

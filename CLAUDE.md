@@ -89,8 +89,16 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 - Un seul worker uvicorn.
 - Changement de schéma : traité dans `db.init()` (pas d'outil de migration).
 - Ne rien inventer : signaler ce qui n'est pas vérifié (Windows, Hikvision, enregistrement sur détection).
+- Sécurité (revue du 31/10/2026) : connexion = même réponse et même durée pour un compte inconnu (`_DUMMY_HASH`),
+  verrouillage par compte+adresse (5) et par adresse tous comptes (`IP_LOCK_FAILS`, 20) ; changement de mot de passe
+  → autres sessions fermées ; adresse de NVR limitée à nom/IP (`HOST_RE`) ; un extrait en préparation à la fois,
+  `preview.MAX_PENDING` aperçus ; mot de passe admin généré jamais dans le journal ; `FFMPEG` imposé en programme Windows.
 
 ## Reste à faire
 E-mail à configurer dans Paramètres (compte d'envoi + destinataire) ; essayer l'installateur sur un vrai poste
 Windows ; essai réel d'une caméra débranchée ; Hikvision (caméras et enregistrement) ;
 compte NVR en lecture seule au lieu de l'admin ; NTP du NVR désactivé (horloge en retard).
+**Risque connu (Windows)** : `%PROGRAMDATA%\CamSup` est en `users-modify` (CamSup tourne dans la session de
+l'utilisateur) : tout compte Windows du poste peut lire `secret.key` + `camsup.db` (mots de passe des NVR) et modifier
+la base (comptes). Correction de fond : service Windows (compte système, données réservées aux administrateurs),
+fenêtre d'alerte qui interroge l'API au lieu de lire la base.

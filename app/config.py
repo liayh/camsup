@@ -62,7 +62,11 @@ EMAIL_KINDS = ("nvr", "rec", "hdd")                        # types d'alerte envo
 # Extrait vidéo pour les forces de l'ordre (NVR Dahua)
 EXPORT_MAX_MINUTES = int(os.getenv("EXPORT_MAX_MINUTES", "15"))          # durée maximale d'un extrait
 EXPORT_RETENTION_DAYS = int(os.getenv("EXPORT_RETENTION_DAYS", "1"))     # copie de travail effacée du PC après ce délai
-FFMPEG = os.getenv("FFMPEG", str(APP_DIR / "ffmpeg.exe") if (APP_DIR / "ffmpeg.exe").is_file() else "ffmpeg")                                    # conversion en MP4 (chemin de ffmpeg)
+# conversion en MP4 (chemin de ffmpeg). Programme Windows : toujours celui installé à côté de CamSup.exe (Program Files,
+# modifiable par l'administrateur seulement) ; le fichier de réglages, modifiable par tout utilisateur du poste, ne peut
+# pas désigner un autre programme (il serait lancé dans la session des autres utilisateurs).
+_BUNDLED_FFMPEG = APP_DIR / "ffmpeg.exe"
+FFMPEG = str(_BUNDLED_FFMPEG) if FROZEN else os.getenv("FFMPEG", str(_BUNDLED_FFMPEG) if _BUNDLED_FFMPEG.is_file() else "ffmpeg")
 
 # Accès web
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")       # compte intégrateur créé au premier démarrage (base vide)
