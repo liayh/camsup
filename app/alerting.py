@@ -1,4 +1,5 @@
 """Alertes : ouverture/fermeture dédupliquées + notifications (webhook, e-mail), envoyées en arrière-plan."""
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -39,7 +40,9 @@ def popup_state() -> dict:
     kinds = config.POPUP_KINDS
     return {"alerts": db.q(f"SELECT key, kind, message, opened_ts FROM alerts WHERE closed_ts IS NULL AND kind IN "
                            f"({','.join('?' * len(kinds))}) ORDER BY opened_ts", kinds),
-            "heartbeat": db.setting("heartbeat"), "instance": db.setting("instance"), "email": mail.configured()}
+            "heartbeat": db.setting("heartbeat"), "instance": db.setting("instance"), "email": mail.configured(),
+            # résultat réel du dernier envoi : la fenêtre ne dit « installateur prévenu » que si l'e-mail est parti
+            "email_status": json.loads(db.setting("email_status") or "null")}
 
 
 def clear_alert(key: str) -> None:

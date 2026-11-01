@@ -92,7 +92,7 @@ def test_fenetre_alerte_depuis_ce_pc_seulement(env, monkeypatch):
     assert c.get("/api/fenetre").status_code == 400                        # sans défi
     reply = c.get("/api/fenetre", params={"defi": defi}).json()
     data = fenetre.verify(reply, defi)
-    assert [a["key"] for a in data["alerts"]] == ["rec:1"] and set(data) == {"alerts", "heartbeat", "instance", "email"}
+    assert [a["key"] for a in data["alerts"]] == ["rec:1"] and set(data) == {"alerts", "heartbeat", "instance", "email", "email_status"}
     assert data == alerting.popup_state()
     with pytest.raises(ValueError):
         fenetre.verify(reply, fenetre.new_challenge())                     # rejeu d'une ancienne réponse
@@ -240,3 +240,16 @@ def test_rpc2_reste_sur_le_meme_hote(monkeypatch):
     s = dahuarpc.Session("10.0.0.1", 80, "u", "p")
     monkeypatch.setattr(s.http, "get", lambda *a, **k: R())
     assert s._base() == "https://10.0.0.1:4443"
+
+
+def test_fenetre_ne_pretend_pas_avoir_prevenu():
+    """« Installateur prévenu par e-mail » seulement si un envoi a réellement réussi après l'alerte."""
+    from app import popup
+    rows = [{"key": "nvr:x", "kind": "nvr", "message": "NVR injoignable", "opened_ts": 1000}]
+    assert "Aucun e-mail" in popup.email_sentence(rows, False, None)
+    assert "en cours" in popup.email_sentence(rows, True, None)
+    assert "a été prévenu" in popup.email_sentence(rows, True, {"ok": True, "ts": 1005})
+    assert "a été prévenu" not in popup.email_sentence(rows, True, {"ok": True, "ts": 900})   # envoi d'avant l'alerte
+    assert "n'a pas pu partir" in popup.email_sentence(rows, True, {"ok": False, "ts": 1005})
+    cam = [{"key": "camera:1", "kind": "camera", "message": "Caméra débranchée", "opened_ts": 1000}]
+    assert popup.email_sentence(cam, True, {"ok": True, "ts": 1005}) == ""

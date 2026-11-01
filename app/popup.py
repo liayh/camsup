@@ -23,6 +23,9 @@ from . import config, fenetre
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)     # développement : certificat auto-signé local
 
 log = logging.getLogger("popup")
+MAX_ROWS = 8                               # au-delà : « … et N autres problèmes » (fenêtre de taille raisonnable)
+# couleurs imposées partout : sinon Tk prend celles du thème du bureau (texte clair sur fond clair = liste invisible)
+BG, FG, MUTED = "#f4f4f4", "#1a1a1a", "#444444"
 POLL_MS = 5_000                            # caméra perdue : relevée en ≤ 20 s, affichée en ≤ 25 s
 HEARTBEAT_STALE = 300
 STOPPED_KEY = "_surveillance"              # pseudo-alerte : le serveur ne tourne plus
@@ -84,6 +87,20 @@ def read_state(data: dict, now: float, check_heartbeat: bool = True, instance: s
     return rows
 
 
+def email_sentence(rows: list[dict], configured: bool, status: dict | None) -> str:
+    """Ce que la fenêtre dit de l'e-mail à l'installateur : seulement ce qui s'est réellement passé."""
+    critical = [r for r in rows if r["kind"] in config.EMAIL_KINDS]
+    if not critical:
+        return ""                          # problème de caméra : pas d'e-mail prévu
+    if not configured:
+        return "Aucun e-mail d'alerte n'est réglé : prévenez vous-même votre installateur. "
+    if status and status.get("ok") and status.get("ts", 0) >= max(r["opened_ts"] for r in critical):
+        return "Votre installateur a été prévenu par e-mail. "
+    if status and not status.get("ok"):
+        return "L'e-mail à votre installateur n'a pas pu partir : prévenez-le vous-même. "
+    return "Envoi d'un e-mail à votre installateur en cours. "
+
+
 def _center(w) -> None:
     w.update_idletasks()
     x = (w.winfo_screenwidth() - w.winfo_reqwidth()) // 2
@@ -104,14 +121,14 @@ class App:
         self.shown_keys: set = set()
         self.had_alerts = False
         self.started = self.last_ok = time.time()            # 5 min laissées au serveur pour démarrer
-        self.email = False
+        self.email, self.email_status = False, None
         self.root.after(2000, self.tick)
 
     def tick(self) -> None:
         now = time.time()
         try:
             data = fetch()
-            self.last_ok, self.email = now, bool(data.get("email"))
+            self.last_ok, self.email, self.email_status = now, bool(data.get("email")), data.get("email_status")
             # au démarrage, le battement de cœur date de l'arrêt précédent : on laisse 5 min au serveur
             rows = read_state(data, now, now - self.started > HEARTBEAT_STALE, self.instance)
         except ServerStopped:
@@ -150,14 +167,16 @@ class App:
         self.win.attributes("-topmost", True)
         self.win.resizable(False, False)
         self.win.protocol("WM_DELETE_WINDOW", self.dismiss)
+        self.win.configure(bg=BG)
         tk.Label(self.win, text="⚠  Problème de vidéosurveillance", bg="#b00020", fg="white",
                  font=("Segoe UI", 14, "bold"), padx=16, pady=10, anchor="w").pack(fill="x")
-        self.body = tk.Frame(self.win, padx=16, pady=10)
+        self.body = tk.Frame(self.win, padx=16, pady=10, bg=BG)
         self.body.pack(fill="both")
-        self.foot = tk.Label(self.win, justify="left", wraplength=520, padx=16, fg="#444", font=("Segoe UI", 9))
+        self.foot = tk.Label(self.win, justify="left", wraplength=520, padx=16, bg=BG, fg=MUTED, font=("Segoe UI", 9))
         self.foot.pack(fill="x")
         tk.Button(self.win, text=f"Fermer (rappel dans {config.POPUP_REMIND_HOURS:g} h)", command=self.dismiss,
-                  padx=12, pady=4).pack(pady=12)
+                  padx=12, pady=4, bg="#e4e4e4", fg=FG, activebackground="#d0d0d0", activeforeground=FG,
+                  highlightbackground=BG).pack(pady=12)
         self.fill(rows)
         _center(self.win)
         self.win.lift()
@@ -167,12 +186,14 @@ class App:
     def fill(self, rows: list[dict]) -> None:
         for w in self.body.winfo_children():
             w.destroy()
-        for r in rows:
+        for r in rows[:MAX_ROWS]:
             since = time.strftime("%d/%m %H:%M", time.localtime(r["opened_ts"]))
             self.tk.Label(self.body, text=f"•  {r['message']}   (depuis le {since})", anchor="w", justify="left",
-                          wraplength=520, font=("Segoe UI", 11)).pack(fill="x", pady=2)
-        emailed = any(r["kind"] in config.EMAIL_KINDS for r in rows) and self.email
-        self.foot.config(text=("Votre installateur a été prévenu par e-mail. " if emailed else "")
+                          wraplength=520, font=("Segoe UI", 11), bg=BG, fg=FG).pack(fill="x", pady=2)
+        if len(rows) > MAX_ROWS:
+            self.tk.Label(self.body, text=f"…  et {len(rows) - MAX_ROWS} autre(s) problème(s) : voir CamSup",
+                          anchor="w", font=("Segoe UI", 11, "italic"), bg=BG, fg=FG).pack(fill="x", pady=2)
+        self.foot.config(text=email_sentence(rows, self.email, self.email_status)
                          + "Cette fenêtre reviendra tant que le problème n'est pas résolu.")
         self.shown_keys = {r["key"] for r in rows}
 
@@ -192,10 +213,12 @@ class App:
         self.info = w = tk.Toplevel(self.root)
         w.title(f"CamSup — {title}")
         w.attributes("-topmost", True)
+        w.configure(bg=BG)
         tk.Label(w, text=f"✔  {title}", bg="#1b7a3a", fg="white", font=("Segoe UI", 13, "bold"),
                  padx=16, pady=8, anchor="w").pack(fill="x")
-        tk.Label(w, text=text, padx=16, pady=10, font=("Segoe UI", 11)).pack()
-        tk.Button(w, text="OK", command=w.destroy, padx=12).pack(pady=(0, 12))
+        tk.Label(w, text=text, padx=16, pady=10, font=("Segoe UI", 11), bg=BG, fg=FG).pack()
+        tk.Button(w, text="OK", command=w.destroy, padx=12, bg="#e4e4e4", fg=FG, activebackground="#d0d0d0",
+                  activeforeground=FG, highlightbackground=BG).pack(pady=(0, 12))
         _center(w)
         w.after(60_000, lambda: w.winfo_exists() and w.destroy())
 
