@@ -11,6 +11,7 @@ Tkinter : fourni avec Python sous Windows, aucune dépendance en plus.
 """
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ from . import config, fenetre
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)     # développement : certificat auto-signé local
 
 log = logging.getLogger("popup")
+RESET_AFTER = 120                          # s sans aucun problème avant d'oublier la fermeture et d'annoncer « rétabli »
 MAX_ROWS = 8                               # au-delà : « … et N autres problèmes » (fenêtre de taille raisonnable)
 # couleurs imposées partout : sinon Tk prend celles du thème du bureau (texte clair sur fond clair = liste invisible)
 BG, FG, MUTED = "#f4f4f4", "#1a1a1a", "#444444"
@@ -42,6 +44,9 @@ class Reminder:
     remind_seconds: float
     dismissed_keys: set = field(default_factory=set)
     dismissed_at: float | None = None
+    # tout rétabli depuis… : la fermeture n'est oubliée qu'après `RESET_AFTER` s sans problème, sinon une alerte qui
+    # disparaît et revient quelques secondes plus tard (caméra, NVR instable) rouvrirait la fenêtre aussitôt fermée
+    clear_since: float | None = None
 
     def should_show(self, keys: set, now: float) -> bool:
         if not keys:
@@ -54,7 +59,19 @@ class Reminder:
         self.dismissed_keys, self.dismissed_at = set(keys), now
 
     def reset(self) -> None:
-        self.dismissed_keys, self.dismissed_at = set(), None
+        self.dismissed_keys, self.dismissed_at, self.clear_since = set(), None, None
+
+    def all_clear(self, now: float) -> bool:
+        """Plus aucun problème à ce relevé ; True quand c'est durable (fermeture oubliée, « rétabli » à annoncer)."""
+        if self.clear_since is None:
+            self.clear_since = now
+        if now - self.clear_since >= RESET_AFTER:
+            self.reset()
+            return True
+        return False
+
+    def problems(self) -> None:
+        self.clear_since = None
 
 
 def stopped_row(since: float) -> dict:
@@ -143,6 +160,7 @@ class App:
             rows = [stopped_row(self.last_ok)]
         keys = {r["key"] for r in rows}
         if rows:
+            self.rem.problems()
             self.had_alerts = True
             if self.win is not None:          # fenêtre déjà ouverte : contenu mis à jour
                 new = keys - self.shown_keys
@@ -154,8 +172,7 @@ class App:
                 self.show(rows)
         else:
             self.close_alert()
-            self.rem.reset()
-            if self.had_alerts:
+            if self.rem.all_clear(now) and self.had_alerts:
                 self.had_alerts = False
                 self.notice("Vidéosurveillance rétablie", "Tous les problèmes signalés sont résolus.")
         self.root.after(POLL_MS, self.tick)
@@ -227,9 +244,19 @@ _mutex = None
 
 
 def single_instance() -> bool:
-    """Une seule fenêtre d'alerte par session Windows (démarrage de session + lancement après installation)."""
+    """Une seule fenêtre d'alerte par session (Windows : démarrage de session + lancement après installation ; Linux :
+    par utilisateur et par écran), sinon plusieurs fenêtres empilées : on en ferme une, la suivante apparaît."""
     global _mutex
     if os.name != "nt":
+        import fcntl
+        import tempfile
+        folder = os.getenv("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+        display = re.sub(r"[^\w.]", "_", os.getenv("DISPLAY", "") or os.getenv("WAYLAND_DISPLAY", "") or "0")
+        _mutex = open(os.path.join(folder, f"camsup-fenetre-{os.getuid()}-{display}.lock"), "w")
+        try:
+            fcntl.flock(_mutex, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
         return True
     import ctypes
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)

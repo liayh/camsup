@@ -158,6 +158,30 @@ def test_rappel_de_la_fenetre():
     assert not r.should_show(set(), 5 * 3600)
 
 
+def test_fermeture_gardee_si_les_alertes_clignotent():
+    """Alerte qui disparaît puis revient peu après : la fenêtre fermée ne se rouvre pas aussitôt."""
+    from app import popup
+    r = Reminder(remind_seconds=4 * 3600)
+    r.dismiss({"camera:1"}, 0)
+    r.problems()
+    assert not r.all_clear(10)                               # disparue 10 s…
+    r.problems()
+    assert not r.should_show({"camera:1"}, 15)               # … revenue : fenêtre toujours fermée
+    assert not r.all_clear(20)
+    assert r.all_clear(20 + popup.RESET_AFTER)               # rétabli pour de bon : fermeture oubliée
+    assert r.should_show({"camera:1"}, 20 + popup.RESET_AFTER + 5)
+
+
+def test_une_seule_fenetre(monkeypatch, tmp_path):
+    from app import popup
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(popup, "_mutex", None)
+    assert popup.single_instance()
+    first = popup._mutex
+    assert not popup.single_instance()                      # deuxième fenêtre : refusée
+    first.close()
+
+
 def test_fenetre_serveur_arrete(env):
     from app import popup
     import time
