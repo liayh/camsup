@@ -70,3 +70,24 @@ describe("sauvegarde", () => {
     expect(fmtDur(277)).toBe("4 min 37 s");
   });
 });
+
+import { dayStart, daySpans } from "./Export";
+
+describe("vue sur plusieurs jours", () => {
+  it("découpe les périodes enregistrées par jour", () => {
+    const d = new Date(2026, 9, 30).getTime() / 1000;
+    const next = dayStart(d, 1);
+    expect(next - d).toBe(86400);
+    // 22 h → 2 h le lendemain : 2 h affichées sur le premier jour, 2 h sur le second
+    const segs = [[d + 22 * 3600, next + 2 * 3600]];
+    expect(daySpans(segs, d, next)).toEqual([[(22 / 24) * 100, (2 / 24) * 100]]);
+    expect(daySpans(segs, next, dayStart(d, 2))).toEqual([[0, (2 / 24) * 100]]);
+    expect(daySpans([[d - 7200, d - 3600]], d, next)).toEqual([]);
+  });
+  it("trouve minuit même au changement d'heure", () => {
+    const sunday = new Date(2026, 9, 25, 15, 0).getTime() / 1000;   // passage à l'heure d'hiver
+    const m = dayStart(sunday);
+    expect(new Date(m * 1000).getHours()).toBe(0);
+    expect(dayStart(sunday, 1) - m).toBe((new Date(2026, 9, 26).getTime() - new Date(2026, 9, 25).getTime()) / 1000);
+  });
+});

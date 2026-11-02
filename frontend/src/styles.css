@@ -131,6 +131,14 @@ legend { color: var(--mut); font-size: 12px; }
 .timebar { position: relative; height: 22px; background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; margin-top: 8px; cursor: pointer; max-width: 1100px; }
 .timebar-rec { position: absolute; top: 0; bottom: 0; background: var(--ok); opacity: .35; pointer-events: none; }
 .timebar-fill { position: absolute; inset: 0 auto 0 0; background: var(--acc); opacity: .45; border-radius: 4px 0 0 4px; pointer-events: none; }
+.days { margin-top: 8px; max-width: 1100px; }
+.day-row { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; }
+.day-row .day-bar { margin-top: 4px; height: 18px; }
+.day-label { font-size: 13px; color: var(--mut); white-space: nowrap; }
+.day-ticks { position: relative; height: 16px; font-size: 11px; opacity: .7; }
+.day-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.day-ticks span:first-child { transform: none; } .day-ticks span:last-child { transform: translateX(-100%); }
+@media (max-width: 600px) { .day-row { grid-template-columns: 64px 1fr; } }
 .cut { position: absolute; top: -4px; transform: translateX(-50%); font-size: 16px; pointer-events: none; }
 .cut-start { color: var(--ok); } .cut-end { color: var(--bad); }
 .grow { flex: 1; }

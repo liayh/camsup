@@ -198,3 +198,24 @@ def test_periodes_enregistrees(env, nvr, monkeypatch):
                   headers=H).status_code == 404
     assert c.post("/api/recordings", json={"camera_ids": [env["cam_a"]], "start_ts": start, "end_ts": start + 2 * 86400},
                   headers=H).status_code == 400
+
+
+def test_vue_sur_plusieurs_jours(env, monkeypatch):
+    """Périodes enregistrées depuis minuit il y a N-1 jours ; caméras d'un autre site : 404."""
+    from datetime import datetime, timedelta
+    from app import preview
+    seen = {}
+
+    def recorded(cams, start, end):
+        seen.update(start=start, end=end, cams=[c["id"] for c in cams])
+        return {c["id"]: [[start + 3600, start + 7200]] for c in cams}
+
+    monkeypatch.setattr(preview, "recorded", recorded)
+    c = client("pharma", "motdepasse-pharma")
+    r = c.post("/api/recordings/days", json={"camera_ids": [env["cam_a"]], "days": 7}, headers=H)
+    assert r.status_code == 200, r.text
+    midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=6)
+    assert r.json()["start_ts"] == int(midnight.timestamp()) == seen["start"]
+    assert r.json()["cameras"][str(env["cam_a"])] == [[seen["start"] + 3600, seen["start"] + 7200]]
+    assert c.post("/api/recordings/days", json={"camera_ids": [env["cam_b"]], "days": 7}, headers=H).status_code == 404
+    assert c.post("/api/recordings/days", json={"camera_ids": [env["cam_a"]], "days": 60}, headers=H).status_code == 422

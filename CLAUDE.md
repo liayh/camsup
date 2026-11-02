@@ -39,6 +39,10 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   1 à 15 min (`EXPORT_MAX_MINUTES`), un extrait à la fois (file de 1), table `exports`, fichiers `data/exports/<id>.zip`, purge après
   `EXPORT_RETENTION_DAYS`, `recover()` au démarrage. Mesuré : 10 min d'une caméra 5 Mpx H.265 = 231 Mo en 22 s.
   ffmpeg à fournir sous Windows (`FFMPEG`) : non vérifié.
+- « Vue sur plusieurs jours » (page Vidéo, demandée le 02/11/2026 : vidéo à chercher sans jour ni heure) :
+  `POST /recordings/days` (1–4 caméras, 1–31 jours, depuis minuit il y a N−1 jours, `preview.recorded`) → une barre
+  par jour (0–24 h) avec les périodes enregistrées ; un clic lance la lecture d'1 h à partir de l'instant cliqué.
+  Vitesses ×1 à ×16 (×16 = maximum de Chrome/Edge). Recherche par mouvement et planche d'images : non retenues.
 - `preview.py` : « Chercher le moment » : tranche horaire (≤ 6 h), 1 à 4 caméras synchronisées, lue par morceaux de 5 min
   (morceau en cours + suivant demandés par l'interface), ciseaux début / fin sur la barre de temps.
   La planche d'images (« chercher le moment ») a été retirée à la demande de l'utilisateur (30/10/2026).

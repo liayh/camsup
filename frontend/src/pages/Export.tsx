@@ -9,7 +9,8 @@ import { useCurrent } from "../components/SiteContext";
 const pad = (n: number) => String(n).padStart(2, "0");
 const day = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const hms = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-const SPEEDS = [1, 2, 4, 8];
+const SPEEDS = [1, 2, 4, 8, 16];   // ×16 : maximum des navigateurs (Chrome, Edge)
+const DAY_CHOICES = [7, 14, 30];
 
 /** Période saisie (heure du PC) → horodatages ; une fin avant le début = le lendemain (période sur minuit). */
 export function period(date: string, from: string, to: string): [number, number] | null {
@@ -77,6 +78,18 @@ const dm = (ts: number) => { const d = new Date(ts * 1000); return `${pad(d.getD
 export const fmtSegs = (segs: Segs) =>
   segs.map(([a, b]) => `${dm(a)} ${hm(a)} → ${dm(a) === dm(b) ? "" : dm(b) + " "}${hm(b)}`).join(", ");
 
+/** Minuit (heure du PC) du jour `i` jours après celui de `ts` : bon aussi aux changements d'heure. */
+export function dayStart(ts: number, i = 0): number {
+  const d = new Date(ts * 1000);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + i).getTime() / 1000;
+}
+/** Morceaux enregistrés d'une journée [d, d+1j[ en % de la barre : [gauche, largeur]. */
+export function daySpans(segs: Segs, d: number, next: number): number[][] {
+  const len = next - d;
+  return segs.filter(([a, b]) => b > d && a < next)
+    .map(([a, b]) => [((Math.max(a, d) - d) / len) * 100, ((Math.min(b, next) - Math.max(a, d)) / len) * 100]);
+}
+
 /** Secondes enregistrées (par au moins une caméra) dans [a, b[. */
 export function covered(segs: Segs, a: number, b: number): number {
   return segs.reduce((n, [x, y]) => n + Math.max(0, Math.min(y, b) - Math.max(x, a)), 0);
@@ -108,6 +121,10 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
   const [saving, setSaving] = useState<Saving | null>(null);
   const [rec, setRec] = useState<Record<string, Segs> | null>(null);       // périodes enregistrées ce jour-là
   const [looking, setLooking] = useState(false);
+  const [days, setDays] = useState(7);
+  const [many, setMany] = useState<{ start_ts: number; end_ts: number; cameras: Record<string, Segs>; ids: number[] } | null>(null);
+  const [loadingDays, setLoadingDays] = useState(false);
+  const viewer = useRef<HTMLElement | null>(null);
   const recFor = useRef<{ key: string; p: Promise<Record<string, Segs> | null> } | null>(null);
   const vids = useRef<Record<number, HTMLVideoElement | null>>({});
   const asked = useRef<Set<string>>(new Set());
@@ -180,14 +197,14 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
   const all = () => ready.map((c) => vids.current[c]).filter((v): v is HTMLVideoElement => !!v);
   const at = base + chunk * CHUNK + Math.floor(pos);
 
-  /** Lecture de [from, to] (heure du PC) pour les caméras cochées. */
-  const display = async (want: Range) => {
+  /** Lecture de [from, to] (heure du PC) pour les caméras cochées ; `d` : jour (si autre que celui du formulaire). */
+  const display = async (want: Range, d: string = date) => {
     const r = { from: want.from, to: Math.min(want.to, Math.floor(Date.now() / 1000)) };
     if (!sel.length) return;
     if (r.to <= r.from) { toast("Cette période n’est pas encore enregistrée", "bad"); return; }
     if (r.to - r.from > MAX_HOURS * 3600) { toast(`${MAX_HOURS} h au plus d’un coup`, "bad"); return; }
     setLooking(true);
-    const found = await fetchRec(date, sel);      // pour la barre de temps et pour sauter les trous
+    const found = await fetchRec(d, sel);         // pour la barre de temps et pour sauter les trous
     setLooking(false);
     const first = found ? firstRecorded(union(found, sel), r.from, r.to) : r.from;
     const [k, off] = locate(first ?? r.from, r);
@@ -297,6 +314,26 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
     if (d > maxMinutes * 60) { toast(`${maxMinutes} min au plus : avancez le début (✂ Début ici)`, "bad"); return; }
     setDur(d); setSaving(null);
   };
+  /** Vue sur plusieurs jours : ce que le NVR a gardé pour les caméras cochées. */
+  const loadDays = async () => {
+    if (!sel.length) return;
+    setLoadingDays(true);
+    const r = await run(() => post<{ start_ts: number; end_ts: number; cameras: Record<string, Segs> }>("/recordings/days", { camera_ids: sel, days }));
+    setLoadingDays(false);
+    if (r) setMany({ ...r, ids: [...sel] });
+  };
+  /** Clic sur un jour : lecture d'une heure à partir de l'instant cliqué (les trous sont sautés). */
+  const openAt = (ts: number) => {
+    const from = Math.max(ts - (ts % 300), 0);
+    const d = day(new Date(from * 1000));
+    setDate(d); setFrom(hm(from)); setTo(hm(from + 3600));
+    display({ from, to: from + 3600 }, d);
+    setTimeout(() => viewer.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
+  const manyUnion = many ? union(many.cameras, many.ids) : null;
+  const dayRows = many ? Array.from({ length: Math.round((dayStart(many.end_ts) - many.start_ts) / 86400) + 1 },
+    (_, i) => dayStart(many.start_ts, i)).reverse() : [];
+
   const busy = shown.some((c) => has(c, chunk) && (!job(c) || job(c).state === "attente" || job(c).state === "en_cours"));
   const inRange = recorded && range ? recorded.filter(([a, b]) => b > range.from && a < range.to) : null;
 
@@ -338,6 +375,41 @@ function Viewer({ cams, siteId, siteName, maxMinutes }: { cams: Camera[]; siteId
       </form>
     </section>
     <section className="card">
+      <h2>Vue sur plusieurs jours</h2>
+      <p className="muted small">Jour et heure inconnus : affichez ce que le NVR a enregistré sur plusieurs jours, puis cliquez
+        sur un jour à l’heure voulue pour regarder. Les caméras cochées ci-dessus sont utilisées.</p>
+      <div className="row">
+        <span className="muted small">Période</span>
+        {DAY_CHOICES.map((n) => <button key={n} type="button" className={`btn small ${days === n ? "primary" : ""}`} onClick={() => setDays(n)}>{n} jours</button>)}
+        <button type="button" className="btn" disabled={!sel.length || loadingDays} onClick={loadDays}>
+          {loadingDays ? <><span className="spinner" /> Recherche sur le NVR…</> : <>Afficher ({sel.length} caméra{sel.length > 1 ? "s" : ""})</>}</button>
+      </div>
+      {many && manyUnion && (
+        <div className="days">
+          <p className="small">{manyUnion.length
+            ? <>Images les plus anciennes : <b>{fmtDateTime(manyUnion[0][0])}</b>{many.start_ts >= manyUnion[0][0] - 60 ? " (début de la période affichée)" : ""}.</>
+            : <>Aucune image enregistrée sur ces {days} jours.</>}</p>
+          <div className="day-row day-scale"><span /><div className="day-ticks">{[0, 6, 12, 18, 24].map((h) => <span key={h} style={{ left: `${(h / 24) * 100}%` }}>{h} h</span>)}</div></div>
+          {dayRows.map((d) => {
+            const next = dayStart(d, 1);
+            const label = new Date(d * 1000).toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit" });
+            return (
+              <div key={d} className="day-row">
+                <span className="day-label">{label}</span>
+                <div className="timebar day-bar" role="button" tabIndex={0} aria-label={`Regarder le ${label}`}
+                     onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); openAt(Math.floor(d + ((e.clientX - r.left) / r.width) * (next - d))); }}
+                     onKeyDown={(e) => { if (e.key === "Enter") openAt(d + 8 * 3600); }}>
+                  {daySpans(manyUnion, d, next).map(([l, w]) => <div key={l} className="timebar-rec" style={{ left: `${l}%`, width: `${w}%` }} />)}
+                </div>
+              </div>
+            );
+          })}
+          <p className="muted small">En vert : périodes enregistrées par au moins une des caméras. Un clic lance la lecture d’une heure à
+            partir de l’instant cliqué ; ensuite, ×8 ou ×16 pour faire défiler vite.</p>
+        </div>
+      )}
+    </section>
+    <section className="card" ref={viewer}>
       <h2>Chercher le moment</h2>
       <form className="form" onSubmit={show}>
         <div className="grid-form form">

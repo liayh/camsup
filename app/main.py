@@ -8,7 +8,7 @@ import logging
 import re
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -625,6 +625,28 @@ class RecordedIn(BaseModel):
     camera_ids: list[int] = Field(min_length=1, max_length=4)
     start_ts: int
     end_ts: int
+
+
+class RecordedDaysIn(BaseModel):
+    camera_ids: list[int] = Field(min_length=1, max_length=4)
+    days: int = Field(7, ge=1, le=31)
+
+
+@router.post("/recordings/days")
+def recordings_days(body: RecordedDaysIn, user: User = Me):
+    """Vue sur plusieurs jours (« Vidéo ») : ce que le NVR a enregistré de minuit il y a `days - 1` jours à maintenant,
+    heure du PC, pour chercher une vidéo dont on ne connaît ni le jour ni l'heure."""
+    cams = [_cam(user, cid) for cid in dict.fromkeys(body.camera_ids)]
+    if any(c["brand"] != "dahua" for c in cams):
+        raise HTTPException(400, "Images visibles seulement depuis un NVR Dahua")
+    end = db.now()
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    start = int((today - timedelta(days=body.days - 1)).timestamp())
+    try:
+        found = preview.recorded(cams, start, end)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"NVR : {nvrwatch.reason(e)}")
+    return {"start_ts": start, "end_ts": end, "cameras": {str(k): v for k, v in found.items()}}
 
 
 @router.post("/recordings")
