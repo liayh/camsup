@@ -1,4 +1,4 @@
-import type { Disk } from "../api/types";
+import type { Disk, RecorderHealth } from "../api/types";
 import { fmtBytes } from "../format";
 import { Badge } from "./ui";
 
@@ -48,5 +48,57 @@ export function DiskHealth({ d }: { d: Disk }) {
       ) : <p className="muted small">Secteurs défectueux : non fournis par cet enregistreur (SMART indisponible).</p>}
       {d.issues.length > 0 && <div className="error-text">⚠ {d.issues.join(" · ")}</div>}
     </div>
+  );
+}
+
+/** Secteurs défectueux (réalloués + en attente + illisibles) ; null si le NVR ne les fournit pas. Les erreurs de câble
+ *  (CRC) ne sont pas des secteurs du disque. */
+export function badSectors(d: Disk): number | null {
+  const c = (d.counters ?? []).filter((x) => x.id !== 199);
+  return c.length ? c.reduce((n, x) => n + x.raw, 0) : null;
+}
+
+/** Verdict en clair pour le bandeau du tableau de bord. */
+export function diskVerdict(d: Disk): { tone: "ok" | "warn" | "bad"; title: string; text: string } {
+  const sectors = badSectors(d);
+  if (d.level === "bad") return { tone: "bad", title: "À remplacer", text: d.issues.join(" · ") || "le disque est en défaut" };
+  if (d.level === "warn") return { tone: "warn", title: "À surveiller", text: d.issues.join(" · ") };
+  if (sectors === null) return { tone: "ok", title: "Bon état", text: "d’après le NVR (détail des secteurs non fourni)" };
+  return { tone: "ok", title: "Bon état", text: "aucun secteur défectueux" };
+}
+
+/** Bandeau « Santé des disques durs » : un verdict en gros par disque, en tête du tableau de bord. */
+export function DiskBanner({ recorders }: { recorders: RecorderHealth[] }) {
+  const tiles: { key: string; tone: "ok" | "warn" | "bad" | "info"; title: string; text: string; d?: Disk }[] = [];
+  for (const r of recorders) {
+    if (!r.disks.length) tiles.push({ key: r.host, tone: r.error ? "bad" : "info", title: r.error ? "Disques illisibles" : "Aucun disque",
+      text: r.error ? `NVR ${r.host} : ${r.error}` : `NVR ${r.host} : aucun disque détecté` });
+    for (const d of r.disks) tiles.push({ key: `${r.host}-${d.name}`, ...diskVerdict(d), d });
+  }
+  const worst = tiles.some((t) => t.tone === "bad") ? "bad" : tiles.some((t) => t.tone === "warn") ? "warn" : "ok";
+  return (
+    <section className={`card disk-banner db-${worst}`} aria-label="Santé des disques durs">
+      <div className="row"><h2>Santé des disques durs</h2><span className="grow" />
+        <span className="muted small">secteurs défectueux, température et usure lus sur le NVR (SMART)</span></div>
+      {!tiles.length ? <p className="muted">Premier relevé dans les 30 secondes qui suivent le démarrage.</p> : (
+        <div className="db-tiles">{tiles.map((t) => {
+          const sectors = t.d ? badSectors(t.d) : null;
+          return (
+            <div key={t.key} className={`db-tile db-${t.tone}`}>
+              <div className="db-verdict">{t.tone === "ok" ? "✔" : t.tone === "info" ? "?" : "⚠"} {t.title}</div>
+              <div className="db-name">{t.d ? `${t.d.model || t.d.name} · ${t.d.name}` : ""}</div>
+              <div className="db-text">{t.text}</div>
+              {t.d && (
+                <div className="db-figures">
+                  <span><b>{sectors === null ? "—" : sectors.toLocaleString("fr-FR")}</b> secteur{sectors === 1 ? "" : "s"} défectueux</span>
+                  <span><b>{t.d.temp != null ? `${t.d.temp} °C` : "—"}</b> température</span>
+                  <span><b>{t.d.hours == null ? "—" : `${(t.d.hours / 8760).toFixed(1)} ans`}</b> en marche</span>
+                </div>
+              )}
+            </div>
+          );
+        })}</div>
+      )}
+    </section>
   );
 }

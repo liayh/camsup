@@ -84,6 +84,7 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 - Base SQLite : `sites`, `cameras` (un canal d'un NVR), `alerts`, `status`, `settings`, `smart_baseline`, `exports`, `users`,
   `user_sites`, `sessions`, `audit`. `db._drop_obsolete` retire les tables de l'ancienne version et reconstruit `sites`
   sans `client_id` (clés étrangères suspendues pendant l'opération, sinon cascade sur les caméras).
+- Tableau de bord : bandeau « Santé des disques durs » en tête (03/11/2026, `components/DiskHealth` `DiskBanner` : verdict par disque Bon état / À surveiller / À remplacer, secteurs défectueux = 5+197+198 sans le CRC, température, années de marche ; disques illisibles = rouge).
 - Interface (`frontend/`, compilée dans `app/static/app`, thème ardoise et disposition de la maquette du 31/10/2026) : barre du haut
   (Tableau de bord, Vidéo, NVR et disques, Alertes ; recherche, Paramètres), colonne « Pharmacies » à gauche avec l'état de
   chacune (`components/SiteContext` : pharmacie choisie + un seul relevé `/overview` toutes les 5 s, `siteState`) ;

@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { isIntegrator } from "../auth/AuthContext";
-import { DiskHealth } from "../components/DiskHealth";
+import { DiskBanner, DiskHealth } from "../components/DiskHealth";
 import { NvrConfig } from "../components/NvrConfig";
 import { useCurrent } from "../components/SiteContext";
 import { Badge, Empty, ErrorState, Loading, Notice, PageHeader, Stat } from "../components/ui";
@@ -35,6 +35,7 @@ export default function Dashboard() {
         <button className="btn small" onClick={reload}>Actualiser</button>
       </PageHeader>
       {!d.email && admin && <Notice tone="warn">E-mail non configuré : les alertes ne s’affichent que sur ce poste (voir Paramètres).</Notice>}
+      <DiskBanner recorders={recorders} />
       <div className="split">
         <div className="split-main">
           <div className="stats">
@@ -53,7 +54,7 @@ export default function Dashboard() {
             )}
           </section>
           <section className="card">
-            <h2>Disques durs de l’enregistreur</h2>
+            <h2>Détail des disques durs</h2>
             {recorders.length === 0 ? <Empty>Premier relevé dans les 30 secondes qui suivent le démarrage.</Empty>
               : recorders.map((r) => (
                 <div key={r.host}>

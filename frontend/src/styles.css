@@ -156,3 +156,16 @@ legend { color: var(--mut); font-size: 12px; }
 .split-side { flex: 1 1 280px; max-width: 100%; display: flex; flex-direction: column; gap: 0; }
 .split-side h3 { margin-top: 0; }
 .kv { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 6px 0; }
+
+/* Bandeau « Santé des disques durs » (tableau de bord) */
+.disk-banner { border-top: 4px solid var(--ok); }
+.disk-banner.db-warn { border-top-color: var(--warn); } .disk-banner.db-bad { border-top-color: var(--bad); }
+.db-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 8px; }
+.db-tile { background: var(--panel2); border: 1px solid var(--line); border-left: 6px solid var(--ok); border-radius: 10px; padding: 12px 14px; }
+.db-tile.db-warn { border-left-color: var(--warn); } .db-tile.db-bad { border-left-color: var(--bad); } .db-tile.db-info { border-left-color: var(--info); }
+.db-verdict { font-size: 22px; font-weight: 700; color: var(--ok); }
+.db-tile.db-warn .db-verdict { color: var(--warn); } .db-tile.db-bad .db-verdict { color: var(--bad); } .db-tile.db-info .db-verdict { color: var(--info); }
+.db-name { color: var(--mut); font-size: 12.5px; margin-top: 2px; }
+.db-text { margin-top: 6px; }
+.db-figures { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; color: var(--mut); font-size: 13px; }
+.db-figures b { color: var(--txt); font-size: 16px; font-variant-numeric: tabular-nums; }
