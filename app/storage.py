@@ -101,6 +101,39 @@ def _hik(host: str, port: int, user: str, pw: str) -> list[dict]:
     return disks
 
 
+def smart_raw(v) -> int:
+    """Valeur brute SMART telle que renvoyée par les NVR : nombre, « 123 », « 123 (0 5 0) », « 0x00000000007B »."""
+    if isinstance(v, bool):
+        return int(v)
+    if isinstance(v, (int, float)):
+        return max(0, int(v))
+    t = str(v or "").strip()
+    if t.lower().startswith("0x"):
+        try:
+            return int(t[2:].split()[0] or "0", 16)
+        except ValueError:
+            return 0
+    m = re.match(r"\d+", t)
+    return int(m[0]) if m else 0
+
+
+def power_on_hours(raw: int) -> int | None:
+    """Heures de marche (SMART 9) : les 32 bits de poids faible (certains disques mettent autre chose au-dessus) ;
+    None si invraisemblable (plus de 20 ans)."""
+    h = raw & 0xFFFFFFFF
+    return h if h <= 20 * 8760 else None
+
+
+def to_bytes(v) -> int:
+    """Taille d'un disque ou d'une partition en octets. Certains NVR anciens la donnent en Mo : une valeur
+    inférieure à 100 Mo pour un disque de vidéosurveillance est donc lue en Mo."""
+    try:
+        n = int(float(v or 0))
+    except (TypeError, ValueError):
+        return 0
+    return n * 1024 * 1024 if 0 < n < 100_000_000 else max(n, 0)
+
+
 SMART_SECONDS = 600                     # SMART (secteurs, température…) relu toutes les 10 min ; l'état du disque, à chaque relevé
 _smart_cache: dict[tuple, tuple[float, list]] = {}
 
@@ -112,48 +145,110 @@ def _smart(s: "dahuarpc.Session", host: str, d: dict) -> list | None:
     hit = _smart_cache.get(key)
     if hit and time.time() - hit[0] < SMART_SECONDS:
         return hit[1]
-    obj = s.call("devStorage.factory.instance", {"name": d["name"]}).get("result")
-    if not obj:
-        return None
     try:
-        vals = (s.call("devStorage.getSmartValue", None, obj).get("params") or {}).get("values", [])
-    finally:
-        s.call("devStorage.destroy", None, obj)
+        obj = s.call("devStorage.factory.instance", {"name": d["name"]}).get("result")
+        if not obj:
+            return hit[1] if hit else None
+        try:
+            vals = (s.call("devStorage.getSmartValue", None, obj).get("params") or {}).get("values", [])
+        finally:
+            s.call("devStorage.destroy", None, obj)
+    except Exception as e:  # noqa: BLE001
+        # SMART momentanément illisible : on garde le dernier relevé plutôt que de faire « disparaître » les secteurs
+        log.info("SMART %s %s illisible (%s)", host, d["name"], security.scrub(str(e))[:120])
+        return hit[1] if hit else None
+    if not isinstance(vals, list):
+        vals = []
     _smart_cache[key] = (time.time(), vals)
     return vals
+
+
+def phantom_ok(dev: dict, total: int) -> bool:
+    """Vrai disque ? Les emplacements vides que certains NVR listent (sans taille, sans n° de série, sans partition)
+    ne sont pas affichés ; un disque en panne (taille 0 mais n° de série ou état d'erreur) l'est."""
+    if total > 0 or str(dev.get("SerialNo") or "").strip():
+        return True
+    return str(dev.get("State", "")).lower() not in ("", "unknown", "notexist", "nodisk", "empty", "none", "offline")
 
 
 def _dahua_rpc(host: str, port: int, user: str, pw: str) -> list[dict]:
     """Même API que l'interface web du NVR (lecture seule)."""
     with dahuarpc.shared(host, port, user, pw) as s:
         disks = []
-        for dev in s.params("StorageDeviceManager.getDeviceInfos").get("device", []):
-            parts = dev.get("Partitions") or []
-            total = int(sum(x.get("Total", 0) for x in parts)) or int(dev.get("Capacity", 0))
-            free = int(sum(x.get("Remain", 0) for x in parts))
+        for dev in s.params("StorageDeviceManager.getDeviceInfos").get("device", []) or []:
+            if not isinstance(dev, dict):
+                continue
+            parts = [x for x in (dev.get("Partitions") or []) if isinstance(x, dict)]
+            total = sum(to_bytes(x.get("Total")) for x in parts) or to_bytes(dev.get("Capacity"))
+            free = sum(to_bytes(x.get("Remain")) for x in parts)
             state = dev.get("State", "")
+            if not phantom_ok(dev, total):
+                continue
             d = _disk(dev.get("Name", "?"), state, state in ("Running", "Success") and
                       all(x.get("Status", "LvAvailable") == "LvAvailable" for x in parts),
                       total, max(0, total - free), model=dev.get("Module", ""), serial=dev.get("SerialNo", ""))
             vals = _smart(s, host, d)
             if vals is not None:
                 for v in vals:
-                    raw = int(re.match(r"\d*", str(v.get("Raw", "0")))[0] or 0)
+                    if not isinstance(v, dict):
+                        continue
+                    raw = smart_raw(v.get("Raw", 0))
                     d["smart"].append({"id": v.get("ID"), "name": v.get("Name", ""), "current": v.get("Current", 0),
                                        "worst": v.get("Worst", 0), "threshold": v.get("Threshold", 0),
                                        "raw": raw, "predict": v.get("Predict", 0)})
                     if v.get("ID") == 194:
                         d["temp"] = raw & 0xFF          # certains disques codent min/max dans les octets hauts
                     elif v.get("ID") == 9:
-                        d["hours"] = raw
+                        d["hours"] = power_on_hours(raw)
             disks.append(_health(d))
         return disks
 
 
+def diagnostic(host: str, port: int, user: str, pw: str) -> dict:
+    """Ce que le NVR renvoie sur ses disques, tel quel (aucun mot de passe), pour corriger un modèle mal lu :
+    modèle et version du NVR, réponse RPC2 (disques + SMART), réponse CGI, et ce que CamSup en déduit."""
+    out: dict = {"host": host, "date": time.strftime("%Y-%m-%d %H:%M:%S")}
+    def attempt(name, fn):
+        try:
+            out[name] = fn()
+        except Exception as e:  # noqa: BLE001
+            out[name] = {"erreur": security.scrub(str(e))[:300]}
+    def rpc():
+        with dahuarpc.shared(host, port, user, pw) as s:
+            res = {"modele": s.call("magicBox.getDeviceType"), "version": s.call("magicBox.getSoftwareVersion"),
+                   "disques": s.call("StorageDeviceManager.getDeviceInfos"), "smart": {}}
+            for dev in (res["disques"].get("params") or {}).get("device", []) or []:
+                name = dev.get("Name") if isinstance(dev, dict) else None
+                if not name:
+                    continue
+                obj = s.call("devStorage.factory.instance", {"name": name}).get("result")
+                if obj:
+                    try:
+                        res["smart"][name] = s.call("devStorage.getSmartValue", None, obj)
+                    finally:
+                        s.call("devStorage.destroy", None, obj)
+            return res
+    attempt("rpc2", rpc)
+    attempt("cgi", lambda: device_get(f"http://{host}:{port}/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo",
+                                       user, pw)[:200_000])
+    attempt("lu_par_camsup", lambda: _dahua_rpc(host, port, user, pw))
+    return out
+
+
+_rpc_ok: set[str] = set()                # NVR dont l'API RPC2 a déjà répondu : jamais de repli sur le CGI
+
+
 def _dahua(host: str, port: int, user: str, pw: str) -> list[dict]:
+    """Disques par l'API RPC2 (avec SMART) ; le CGI (sans SMART, autres noms, tailles par partition) seulement pour
+    un NVR qui n'a jamais répondu en RPC2. Avant, un échec passager du RPC2 faisait basculer sur le CGI : disques
+    affichés différemment d'un relevé à l'autre (état instable, taille fausse, disque « en trop »)."""
     try:
-        return _dahua_rpc(host, port, user, pw)
+        disks = _dahua_rpc(host, port, user, pw)
+        _rpc_ok.add(host)
+        return disks
     except Exception as e:  # noqa: BLE001
+        if host in _rpc_ok:
+            raise
         log.info("RPC2 %s indisponible (%s), repli sur le CGI (sans SMART)", host, security.scrub(str(e)))
     text = device_get(f"http://{host}:{port}/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo", user, pw)
     info: dict[int, dict] = {}
@@ -175,7 +270,7 @@ def _dahua(host: str, port: int, user: str, pw: str) -> list[dict]:
             d["used"] += int(float(v))
     return [_health(_disk(d["name"] or f"HDD {i + 1}", d["state"], d["state"] == "Success" and not d["error"],
                           d["total"], d["used"]))
-            for i, d in sorted(info.items())]
+            for i, d in sorted(info.items()) if d["total"] > 0 or d["state"] not in ("", "Unknown", "NoDisk", "Empty")]
 
 
 def _trend(host: str, d: dict) -> None:
@@ -214,9 +309,16 @@ def _poll(key: tuple, cams: list[dict]) -> None:
         entry["disks"] = (_hik if brand == "hikvision" else _dahua)(host, port, user, pw)
         if not entry["disks"]:
             entry["error"] = "Aucun disque détecté"
+        _fails.pop(key, None)
     except Exception as e:  # noqa: BLE001
         entry["error"] = security.scrub(str(e))[:200]
         log.warning("État disques %s:%s : %s", host, port, entry["error"])
+        _fails[key] = _fails.get(key, 0) + 1
+        with _lock:
+            prev = _state.get(key)
+        if prev and prev["disks"] and _fails[key] < STALE_FAILS:
+            # échec passager (NVR occupé, réseau) : on garde le dernier relevé au lieu d'afficher « disques illisibles »
+            return
     for d in entry["disks"]:
         _trend(host, d)
     with _lock:
@@ -235,6 +337,8 @@ def _poll(key: tuple, cams: list[dict]) -> None:
 
 
 _running = threading.Lock()
+_fails: dict[tuple, int] = {}
+STALE_FAILS = 4                          # relevés en échec d'affilée (30 s chacun) avant d'afficher l'erreur
 
 
 def check(cams: list[dict]) -> None:

@@ -85,6 +85,15 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   Essai sans écran : `xvfb-run` + capture `ffmpeg -f x11grab`.
 - Premier compte (03/11/2026) : sans `ADMIN_PASSWORD`, aucun compte n'est créé ; l'interface affiche « Créez votre compte » (`GET/POST /api/setup`, depuis 127.0.0.1 seulement, tant qu'aucun compte n'existe, insertion conditionnelle) → intégrateur connecté aussitôt. L'installateur ne demande plus de mot de passe (`/MOTDEPASSE=` reste possible en silencieux).
 - Fabrication sur un vrai Windows : `.github/workflows/windows.yml` (GitHub Actions : tests, `build.ps1`, installation silencieuse d'essai, `/api/health`, droits, journaux ; installateur en « Artifacts »).
+- Retour du test chez un client (03/11/2026) : mot de passe oublié → `app/recovery.py` (`python -m app.recovery` ;
+  Windows : menu Démarrer « CamSup — mot de passe oublié » = `CamSup.exe --mot-de-passe-oublie`, élévation UAC : être
+  administrateur du PC autorise la réinitialisation) ; désinstallation : proposer d'effacer les données (compte d'essai
+  « admin » resté de l'installation précédente). Disques instables sur un NVR de 9 ans : plus de bascule RPC2 → CGI une
+  fois le RPC2 vu (`storage._rpc_ok`), dernier relevé gardé pendant `STALE_FAILS` échecs, SMART illisible = dernier
+  relevé, emplacements vides masqués (`phantom_ok`), tailles en Mo des vieux NVR (`to_bytes`), valeurs brutes en hexa
+  (`smart_raw`), heures sur 32 bits (`power_on_hours`) ; bouton « Diagnostic des disques » (`/nvr/disks/diagnostic`,
+  réponses brutes du NVR) pour corriger un modèle mal lu. **Cause exacte non confirmée** : attendre le diagnostic.
+  Interface : `ErrorBoundary` (plus de page blanche).
 - `accounts.py` : rôles `integrator` / `pharmacist`, sessions cookie, verrouillage 5 échecs/15 min, CSRF par en-tête
   `X-CamSup: 1`, journal `audit`. Routeurs `main.py` : `public`, `router` (connecté), `admin` (intégrateur).
   Toute route liée à un site passe par `_cam()` / `require_site()` / `site_filter()` (404 hors périmètre).

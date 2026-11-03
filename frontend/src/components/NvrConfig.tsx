@@ -35,3 +35,30 @@ export function NvrConfig({ host, site }: { host: string; site: string }) {
     </>
   );
 }
+
+/** Diagnostic des disques (intégrateur) : ce que le NVR renvoie, tel quel, dans un fichier à envoyer pour correction. */
+export function DiskDiagnostic({ host }: { host: string }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/nvr/disks/diagnostic?host=${encodeURIComponent(host)}`, { credentials: "same-origin" });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.detail ?? `erreur ${r.status}`);
+      const name = /filename="([^"]+)"/.exec(r.headers.get("content-disposition") ?? "")?.[1] ?? "Diagnostic_disques.json";
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement("a");
+      a.href = url; a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      toast(`Diagnostic enregistré : ${name} (dossier Téléchargements)`, "ok");
+    } catch (e) {
+      toast(`Diagnostic impossible : ${(e as Error).message}`, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button className="btn small" onClick={go} disabled={busy} title="Fichier à envoyer si l’état des disques affiché semble faux (aucun mot de passe dedans)">
+      {busy ? <><span className="spinner" /> Lecture du NVR…</> : "Diagnostic des disques"}</button>
+  );
+}

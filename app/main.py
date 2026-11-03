@@ -4,6 +4,7 @@ Accès : `accounts.current_user` sur toutes les routes /api. Les ressources d'un
 (cloisonnement entre pharmacies). Les modifications sont tracées dans le journal d'audit.
 """
 import ipaddress
+import json
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -643,6 +644,17 @@ def create_preview(body: PreviewIn, request: Request, user: User = Me):
         raise HTTPException(400, str(e))
     accounts.audit_req(request, "video.apercu", cam["site_id"], cam["name"], str(job["start_ts"]))
     return job
+
+
+@admin.get("/nvr/disks/diagnostic")
+def nvr_disks_diagnostic(host: str, request: Request):
+    """Diagnostic des disques (intégrateur) : réponses brutes du NVR, à envoyer pour corriger une lecture fausse."""
+    c = _nvr_cams(request.state.user, host)[0]
+    data = storage.diagnostic(c["host"], c["port_http"], c["username"], security.decrypt(c["password_enc"]))
+    accounts.audit_req(request, "nvr.diagnostic_disques", c["site_id"], c["host"])
+    name = re.sub(r"[^\w-]", "_", f"Diagnostic_disques_{c['host']}_{datetime.now():%Y-%m-%d_%Hh%M}")
+    return Response(json.dumps(data, ensure_ascii=False, indent=1, default=str), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.json"', "Cache-Control": "no-store"})
 
 
 class RecordedIn(BaseModel):

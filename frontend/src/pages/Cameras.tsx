@@ -3,7 +3,7 @@ import { del, post, put } from "../api/client";
 import type { Camera, CameraTest, NvrFound, NvrWatch, Site } from "../api/types";
 import { isIntegrator, useAuth } from "../auth/AuthContext";
 import { DiskHealth } from "../components/DiskHealth";
-import { NvrConfig } from "../components/NvrConfig";
+import { DiskDiagnostic, NvrConfig } from "../components/NvrConfig";
 import { useCurrent } from "../components/SiteContext";
 import { useAction, useToast } from "../components/Toast";
 import { Badge, Empty, ErrorState, Loading, Modal, PageHeader } from "../components/ui";
@@ -227,7 +227,8 @@ export default function Cameras() {
               <span className="grow" />
               {admin && brand === "dahua" && <>
                 <button className="btn small" onClick={() => rescan(list[0])}>Chercher de nouvelles caméras</button>
-                <button className="btn small" onClick={() => setCreds(list[0])}>Identifiants du NVR</button></>}
+                <button className="btn small" onClick={() => setCreds(list[0])}>Identifiants du NVR</button>
+                <DiskDiagnostic host={host} /></>}
             </div>
             {w?.error && <div className="error-text">Enregistreur : {w.error}</div>}
             {admin && brand === "dahua" && <details className="small"><summary>Configuration du NVR</summary><NvrConfig host={host} site={cur.name} /></details>}

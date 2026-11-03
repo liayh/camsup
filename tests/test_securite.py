@@ -278,3 +278,48 @@ def test_premier_compte_cree_par_l_utilisateur(monkeypatch):
     assert c.get("/api/setup").json() == {"needed": False}
     assert c.post("/api/setup", json={**body, "username": "intrus"}, headers=H).status_code == 409
     assert db.one("SELECT COUNT(*) n FROM users")["n"] == 1
+
+
+def test_mot_de_passe_oublie_reinitialise_sur_le_pc(env):
+    from app import recovery
+    c = client("pharma", "motdepasse-pharma")
+    with pytest.raises(ValueError):
+        recovery.reset("pharma", "court")
+    with pytest.raises(ValueError):
+        recovery.reset("inconnu", "nouveau-mot-de-passe")
+    recovery.reset("pharma", "nouveau-mot-de-passe")
+    assert c.get("/api/me").status_code == 401                   # anciennes sessions fermées
+    client("pharma", "nouveau-mot-de-passe")                     # nouveau mot de passe accepté
+    assert db.one("SELECT COUNT(*) n FROM audit WHERE action='mot_de_passe.reinitialise'")["n"] == 1
+
+
+def test_lecture_robuste_des_disques():
+    from app import storage
+    assert storage.smart_raw("0x00000000007B") == 123
+    assert storage.smart_raw("8 (0 4 0)") == 8 and storage.smart_raw(5) == 5 and storage.smart_raw(None) == 0
+    assert storage.power_on_hours(0x0000_1234_0000_15E0) == 0x15E0               # octets du haut ignorés
+    assert storage.power_on_hours(999_999) is None                              # invraisemblable
+    assert storage.to_bytes(3815447) == 3815447 * 1024 * 1024                    # donné en Mo par un vieux NVR
+    assert storage.to_bytes(4e12) == 4_000_000_000_000
+    assert not storage.phantom_ok({"State": "Unknown", "SerialNo": ""}, 0)       # emplacement vide : masqué
+    assert storage.phantom_ok({"State": "Error", "SerialNo": ""}, 0)             # disque en panne : affiché
+    assert storage.phantom_ok({"State": "Running", "SerialNo": "WD-123"}, 0)
+
+
+def test_echec_passager_garde_le_dernier_releve(monkeypatch):
+    """Un relevé raté (NVR occupé) ne fait pas « disparaître » les disques ; après STALE_FAILS échecs, l'erreur."""
+    from app import storage
+    key = ("dahua", "10.4.4.4", 80, "u", "x")
+    cam = {"id": 1, "site_id": 1, "password_enc": ""}
+    storage._state.pop(key, None); storage._fails.pop(key, None)
+    good = [{"name": "HDD 1", "level": "ok", "ok": True, "issues": [], "smart": [], "serial": ""}]
+    monkeypatch.setattr(storage, "_dahua", lambda *a: [dict(d) for d in good])
+    storage._poll(key, [cam])
+    def boom(*a):
+        raise RuntimeError("NVR occupé")
+    monkeypatch.setattr(storage, "_dahua", boom)
+    for _ in range(storage.STALE_FAILS - 1):
+        storage._poll(key, [cam])
+        assert storage._state[key]["disks"] and not storage._state[key]["error"]
+    storage._poll(key, [cam])
+    assert storage._state[key]["error"]

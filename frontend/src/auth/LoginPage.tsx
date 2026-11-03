@@ -34,6 +34,12 @@ export function LoginPage() {
         {first && <label>Confirmez le mot de passe<input name="p2" type="password" autoComplete="new-password" required minLength={10} /></label>}
         {error && <p className="error-text" role="alert">{error}</p>}
         <button className="btn primary" disabled={busy}>{busy ? (first ? "Création…" : "Connexion…") : (first ? "Créer mon compte" : "Se connecter")}</button>
+        {!first && <details className="small"><summary>Mot de passe oublié ?</summary>
+          <p className="muted">Pharmacien : demandez à votre installateur de le réinitialiser (Paramètres › Utilisateurs ›
+            Modifier).</p>
+          <p className="muted">Installateur : sur le PC où CamSup est installé, menu Démarrer › <b>CamSup — mot de passe
+            oublié</b>. Windows demande le mot de passe d’un administrateur du PC, puis vous choisissez le compte et son
+            nouveau mot de passe.</p></details>}
         <p className="muted small">Accès tracé : connexions et consultations vidéo sont enregistrées dans le journal.</p>
       </form>
     </div>

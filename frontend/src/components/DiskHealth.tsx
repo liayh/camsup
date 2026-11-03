@@ -29,7 +29,7 @@ export function DiskHealth({ d }: { d: Disk }) {
       <div className="row muted small">
         <span>Capacité {fmtBytes(d.total)}{pct !== null ? ` · ${pct} % rempli${pct >= 99 ? " (normal : le NVR écrase les plus anciens)" : ""}` : ""}</span>
         <span>Température {d.temp != null ? `${d.temp} °C` : "—"}</span>
-        <span>En marche depuis {d.hours == null ? "—" : `${d.hours.toLocaleString("fr-FR")} h (${(d.hours / 8760).toFixed(1)} ans)`}</span>
+        <span>Compteur d’heures du disque : {d.hours == null ? "—" : `${Number(d.hours).toLocaleString("fr-FR")} h (${(d.hours / 8760).toFixed(1)} ans)`}</span>
       </div>
       {d.counters?.length ? (
         <div className="counters">{d.counters.map((c) => {
@@ -38,7 +38,7 @@ export function DiskHealth({ d }: { d: Disk }) {
           const up = c.base !== null && c.raw > c.base;
           return (
             <div key={c.id} className={`counter c-${t}`} title={info.hint}>
-              <div className="counter-value">{c.raw.toLocaleString("fr-FR")}</div>
+              <div className="counter-value">{Number(c.raw ?? 0).toLocaleString("fr-FR")}</div>
               <div className="counter-label">{info.label}</div>
               <div className="counter-hint">{up ? `+${c.raw - (c.base ?? 0)} depuis le ${day(c.since ?? 0)}`
                 : c.since ? `stable depuis le ${day(c.since)}` : info.hint}</div>
@@ -46,7 +46,7 @@ export function DiskHealth({ d }: { d: Disk }) {
           );
         })}</div>
       ) : <p className="muted small">Secteurs défectueux : non fournis par cet enregistreur (SMART indisponible).</p>}
-      {d.issues.length > 0 && <div className="error-text">⚠ {d.issues.join(" · ")}</div>}
+      {(d.issues ?? []).length > 0 && <div className="error-text">⚠ {d.issues.join(" · ")}</div>}
     </div>
   );
 }
@@ -55,14 +55,15 @@ export function DiskHealth({ d }: { d: Disk }) {
  *  (CRC) ne sont pas des secteurs du disque. */
 export function badSectors(d: Disk): number | null {
   const c = (d.counters ?? []).filter((x) => x.id !== 199);
-  return c.length ? c.reduce((n, x) => n + x.raw, 0) : null;
+  return c.length ? c.reduce((n, x) => n + (Number(x.raw) || 0), 0) : null;
 }
 
 /** Verdict en clair pour le bandeau du tableau de bord. */
 export function diskVerdict(d: Disk): { tone: "ok" | "warn" | "bad"; title: string; text: string } {
   const sectors = badSectors(d);
-  if (d.level === "bad") return { tone: "bad", title: "À remplacer", text: d.issues.join(" · ") || "le disque est en défaut" };
-  if (d.level === "warn") return { tone: "warn", title: "À surveiller", text: d.issues.join(" · ") };
+  const issues = d.issues ?? [];
+  if (d.level === "bad") return { tone: "bad", title: "À remplacer", text: issues.join(" · ") || "le disque est en défaut" };
+  if (d.level === "warn") return { tone: "warn", title: "À surveiller", text: issues.join(" · ") };
   if (sectors === null) return { tone: "ok", title: "Bon état", text: "d’après le NVR (détail des secteurs non fourni)" };
   return { tone: "ok", title: "Bon état", text: "aucun secteur défectueux" };
 }
@@ -92,7 +93,7 @@ export function DiskBanner({ recorders }: { recorders: RecorderHealth[] }) {
                 <div className="db-figures">
                   <span><b>{sectors === null ? "—" : sectors.toLocaleString("fr-FR")}</b> secteur{sectors === 1 ? "" : "s"} défectueux</span>
                   <span><b>{t.d.temp != null ? `${t.d.temp} °C` : "—"}</b> température</span>
-                  <span><b>{t.d.hours == null ? "—" : `${(t.d.hours / 8760).toFixed(1)} ans`}</b> en marche</span>
+                  <span><b>{t.d.hours == null ? "—" : `${(t.d.hours / 8760).toFixed(1)} ans`}</b> de marche (compteur du disque)</span>
                 </div>
               )}
             </div>

@@ -56,6 +56,7 @@ Name: "{commonstartup}\CamSup"; Filename: "{app}\CamSup.exe"; Parameters: "--pop
 ; menu Démarrer et bureau : ouvre l'interface dans le navigateur
 Name: "{group}\CamSup"; Filename: "{app}\CamSup.exe"; WorkingDir: "{app}"
 Name: "{commondesktop}\CamSup"; Filename: "{app}\CamSup.exe"; WorkingDir: "{app}"; Tasks: bureau
+Name: "{group}\CamSup — mot de passe oublié"; Filename: "{app}\CamSup.exe"; Parameters: "--mot-de-passe-oublie"; WorkingDir: "{app}"
 Name: "{group}\Désinstaller CamSup"; Filename: "{uninstallexe}"
 
 [Tasks]
@@ -162,4 +163,17 @@ begin
     Result := 10
   else
     Result := 0;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  { désinstallation : garder les données (réinstallation, mise à jour) ou tout effacer (comptes d'essai, autre client) }
+  if (CurUninstallStep = usPostUninstall) and not UninstallSilent then
+    if MsgBox('Supprimer aussi les données de CamSup sur ce PC (comptes, réglages, enregistreurs, extraits vidéo) ?' + #13#13 +
+              'Oui : CamSup repartira de zéro à la prochaine installation (création d''un nouveau compte).' + #13 +
+              'Non : tout est gardé pour une réinstallation.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    begin
+      DelTree(ExpandConstant('{commonappdata}\CamSup'), True, True, True);
+      RegDeleteKeyIncludingSubkeys(HKLM64, 'Software\CamSup');
+    end;
 end;

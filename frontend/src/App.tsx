@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { LoginPage } from "./auth/LoginPage";
 import { Layout } from "./components/Layout";
@@ -18,6 +19,7 @@ function Routed() {
   if (checking) return <Loading label="Vérification de la session…" />;
   if (!me) return <LoginPage />;
   return (
+    <ErrorBoundary>
     <Suspense fallback={<Loading />}>
       <Routes>
         <Route element={<Layout />}>
@@ -33,6 +35,7 @@ function Routed() {
         </Route>
       </Routes>
     </Suspense>
+    </ErrorBoundary>
   );
 }
 
