@@ -2,7 +2,7 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useState 
 import { api, ApiError, AUTH_EXPIRED, post } from "../api/client";
 import type { Me } from "../api/types";
 
-interface Auth { me: Me | null; checking: boolean; login(u: string, p: string): Promise<void>; logout(): Promise<void> }
+interface Auth { me: Me | null; checking: boolean; login(u: string, p: string): Promise<void>; setup(u: string, p: string): Promise<void>; logout(): Promise<void> }
 const Ctx = createContext<Auth | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -19,11 +19,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     setMe(await post<Me>("/login", { username, password }));
   }, []);
+  /** Premier lancement : création de son propre compte (connecté aussitôt). */
+  const setup = useCallback(async (username: string, password: string) => {
+    setMe(await post<Me>("/setup", { username, password }));
+  }, []);
   const logout = useCallback(async () => {
     try { await post("/logout"); } catch (e) { if (!(e instanceof ApiError)) throw e; }
     setMe(null);
   }, []);
-  return <Ctx.Provider value={{ me, checking, login, logout }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ me, checking, login, setup, logout }}>{children}</Ctx.Provider>;
 }
 
 export function useAuth(): Auth {

@@ -13,13 +13,15 @@ CamSup - fabriquer puis installer sur un PC Windows 10/11 (64 bits)
    Durée : quelques minutes (téléchargement de PyInstaller et de ffmpeg, connexion Internet nécessaire).
    Résultat : dist\CamSup-Installation-1.1.0.exe
 
-3. Installer : double-clic sur dist\CamSup-Installation-1.1.0.exe (droits administrateur).
-   - Choisir le mot de passe du compte « admin » (10 caractères au moins, sans # ni guillemets).
+3. Installer : double-clic sur dist\CamSup-Installation-1.1.0.exe (droits administrateur). Rien d'autre à installer :
+   Python, les bibliothèques, l'interface et ffmpeg sont dans l'installateur.
    - CamSup tourne ensuite en permanence sous le compte système (tâche planifiée « CamSup », lancée au démarrage du
      PC, même sans session ouverte) ; la fenêtre d'alerte s'ouvre avec chaque session Windows.
+   - Fabriqué aussi automatiquement sur GitHub à chaque envoi : onglet « Actions » > « Installateur Windows » >
+     dernière exécution > « Artifacts » > CamSup-Installation.
 
 4. Utiliser : icône « CamSup » (menu Démarrer ou bureau) -> le navigateur ouvre http://127.0.0.1:8080
-   - Se connecter : admin + le mot de passe choisi.
+   - Premier lancement : « Créez votre compte » (votre nom d'utilisateur et votre mot de passe, 10 caractères au moins).
    - Enregistreurs et caméras > « Ajouter un enregistreur » : adresse IP du NVR (n'importe laquelle, le PC doit
      être sur le même réseau), utilisateur et mot de passe du NVR > « Se connecter au NVR » > « Toutes » > Ajouter.
    - Paramètres > e-mail de l'installateur.

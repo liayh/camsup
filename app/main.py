@@ -6,7 +6,6 @@ Accès : `accounts.current_user` sur toutes les routes /api. Les ressources d'un
 import ipaddress
 import logging
 import re
-import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -31,18 +30,12 @@ async def lifespan(_: FastAPI):
     fenetre.ensure_key()
     export.recover()
     preview.purge(everything=True)
-    if accounts.bootstrap(security.ADMIN_PASSWORD):
-        if security.GENERATED_PASSWORD:
-            # jamais dans le journal (fichier lisible sur le poste) : seulement sur la console qui a lancé CamSup
-            log.warning("ADMIN_PASSWORD non défini : mot de passe généré pour '%s', affiché sur la console",
-                        config.ADMIN_USER)
-            if config.FROZEN:          # service sans console : fichier du dossier de données (administrateurs)
-                f = config.DATA_DIR / "mot-de-passe-admin.txt"
-                f.write_text(f"{config.ADMIN_USER} : {security.ADMIN_PASSWORD}\r\nÀ changer puis effacer ce fichier.\r\n",
-                             encoding="utf-8")
-                log.warning("Mot de passe généré dans %s", f)
-            elif sys.__stderr__:
-                print(f"Mot de passe de '{config.ADMIN_USER}' : {security.ADMIN_PASSWORD}", file=sys.__stderr__)
+    # compte intégrateur : créé depuis ADMIN_PASSWORD s'il est fourni (installation silencieuse /MOTDEPASSE=, .env) ;
+    # sinon c'est l'utilisateur qui crée le sien à la première ouverture de l'interface (`/api/setup`)
+    if config.ADMIN_PASSWORD:
+        accounts.bootstrap(config.ADMIN_PASSWORD)
+    if accounts.setup_needed():
+        log.warning("Aucun compte : créez le vôtre en ouvrant l'interface sur ce PC")
     if config.FROZEN and db.setting("version") != config.VERSION:
         # mise à jour (1.0 : données modifiables par tous les comptes du poste) : sessions ouvertes fermées
         db.x("DELETE FROM sessions")
@@ -95,6 +88,7 @@ def check_device_host(host: str) -> str:
     return host
 
 
+LOOPBACK = {"127.0.0.1", "::1"}
 public = APIRouter(prefix="/api")
 router = APIRouter(prefix="/api", dependencies=[Depends(accounts.current_user)])
 admin = APIRouter(prefix="/api", dependencies=[Depends(accounts.integrator)])
@@ -163,6 +157,36 @@ def session(request: Request):
     """Utilisateur connecté, ou null : vérification au chargement de l'interface sans provoquer d'erreur 401."""
     user = accounts.session_user(request.cookies.get(accounts.COOKIE))
     return user.public() if user else None
+
+
+class SetupIn(BaseModel):
+    username: str = Field(min_length=2, max_length=80, pattern=r"^[A-Za-z0-9_.@-]+$")
+    password: str = Field(max_length=200)
+
+
+@public.get("/setup")
+def setup_state():
+    """Premier lancement : aucun compte n'existe encore → l'interface propose de créer le sien."""
+    return {"needed": accounts.setup_needed()}
+
+
+@public.post("/setup")
+def setup(body: SetupIn, request: Request, response: Response):
+    """Création du premier compte (intégrateur) par l'utilisateur lui-même : seulement tant qu'aucun compte n'existe,
+    et seulement depuis ce PC (personne d'autre sur le réseau ne peut le faire à sa place)."""
+    if request.headers.get("X-CamSup") != "1":
+        raise HTTPException(403, "En-tête X-CamSup manquant")
+    ip = accounts.client_ip(request)
+    if ip not in LOOPBACK:
+        raise HTTPException(403, "Créez le compte depuis l'ordinateur où CamSup est installé")
+    accounts.check_password_strength(body.password)
+    user = accounts.create_first(body.username, body.password)
+    if not user:
+        raise HTTPException(409, "Un compte existe déjà : connectez-vous")
+    token = accounts.open_session(user, ip)
+    response.set_cookie(accounts.COOKIE, token, max_age=config.SESSION_HOURS * 3600, httponly=True,
+                        samesite="strict", secure=request.url.scheme == "https")
+    return user.public()
 
 
 @router.post("/logout")
@@ -754,9 +778,6 @@ def notify_test(request: Request):
     mail._record(True)
     accounts.audit_req(request, "email.test")
     return {"ok": True}
-
-
-LOOPBACK = {"127.0.0.1", "::1"}
 
 
 @app.get("/api/fenetre")

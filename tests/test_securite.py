@@ -256,3 +256,25 @@ def test_fenetre_ne_pretend_pas_avoir_prevenu():
     assert "n'a pas pu partir" in popup.email_sentence(rows, True, {"ok": False, "ts": 1005})
     cam = [{"key": "camera:1", "kind": "camera", "message": "Caméra débranchée", "opened_ts": 1000}]
     assert popup.email_sentence(cam, True, {"ok": True, "ts": 1005}) == ""
+
+
+def test_premier_compte_cree_par_l_utilisateur(monkeypatch):
+    """Base sans compte : l'interface propose de créer le sien, une seule fois, depuis ce PC seulement."""
+    from fastapi.testclient import TestClient
+    from app import main
+    from app.main import app
+    db.init()
+    for t in ("audit", "sessions", "user_sites", "users"):
+        db.x(f"DELETE FROM {t}")
+    c = TestClient(app)
+    assert c.get("/api/setup").json() == {"needed": True}
+    body = {"username": "pharmacien.martin", "password": "un-mot-de-passe-long"}
+    assert c.post("/api/setup", json=body, headers=H).status_code == 403          # client de test : pas ce PC
+    monkeypatch.setattr(main, "LOOPBACK", {"testclient"})
+    assert c.post("/api/setup", json={**body, "password": "court"}, headers=H).status_code == 400
+    r = c.post("/api/setup", json=body, headers=H)
+    assert r.status_code == 200 and r.json()["role"] == "integrator"
+    assert c.get("/api/me").json()["username"] == "pharmacien.martin"           # connecté tout de suite
+    assert c.get("/api/setup").json() == {"needed": False}
+    assert c.post("/api/setup", json={**body, "username": "intrus"}, headers=H).status_code == 409
+    assert db.one("SELECT COUNT(*) n FROM users")["n"] == 1

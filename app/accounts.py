@@ -93,6 +93,22 @@ def _load(uid: int) -> User | None:
     return User(u["id"], u["username"], u["role"], sites)
 
 
+def setup_needed() -> bool:
+    return db.one("SELECT id FROM users LIMIT 1") is None
+
+
+def create_first(username: str, password: str) -> User | None:
+    """Premier compte (intégrateur), créé par l'utilisateur ; None si un compte existe déjà (deux essais en même temps :
+    un seul gagne, l'insertion est conditionnelle)."""
+    uid = db.x("INSERT INTO users(username,pw_hash,role,created_ts) SELECT ?,?,'integrator',? "
+               "WHERE NOT EXISTS (SELECT 1 FROM users)", (username, hash_password(password), db.now()))
+    row = db.one("SELECT id FROM users WHERE username=?", (username,))
+    if not row or row["id"] != uid or db.one("SELECT COUNT(*) n FROM users")["n"] != 1:
+        return None
+    audit(None, "compte.cree", obj=username, detail="premier compte, créé par l'utilisateur")
+    return _load(uid)
+
+
 def bootstrap(password: str) -> bool:
     """Base sans compte : crée l'intégrateur ADMIN_USER. Renvoie True si un compte a été créé."""
     if db.one("SELECT id FROM users LIMIT 1"):

@@ -3,7 +3,8 @@
 ; Serveur : tâche planifiée « CamSup » sous le compte système, au démarrage du PC (installer-tache.ps1) ; données
 ; (%PROGRAMDATA%\CamSup\data) réservées au système et aux administrateurs. Fenêtre d'alerte : lancée à l'ouverture de
 ; session de chaque utilisateur (CamSup.exe --popup), elle interroge le serveur local.
-; Installation sans question (déploiement) : CamSup-Installation-x.y.z.exe /VERYSILENT /MOTDEPASSE=MotDePasseAdmin
+; Premier lancement : l'utilisateur crée son propre compte dans l'interface (aucun mot de passe demandé ici).
+; Déploiement sans écran : CamSup-Installation-x.y.z.exe /VERYSILENT [/MOTDEPASSE=MotDePasseAdmin → compte « admin »]
 
 #define AppVersion "1.1.0"
 
@@ -63,7 +64,7 @@ Name: "bureau"; Description: "Icône sur le bureau"
 [Run]
 ; le serveur est déjà démarré (tâche planifiée) : fenêtre d'alerte de cette session et interface
 Filename: "{app}\CamSup.exe"; Parameters: "--popup"; Description: "Fenêtre d'alerte sur ce poste"; Flags: nowait postinstall
-Filename: "{app}\CamSup.exe"; Description: "Ouvrir CamSup"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\CamSup.exe"; Description: "Ouvrir CamSup (création de votre compte au premier lancement)"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer-tache.ps1"" -Desinstaller"; Flags: runhidden; RunOnceId: "TacheCamSup"
@@ -71,8 +72,8 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM CamSup.exe"; Flags: runhi
 
 [Code]
 var
-  PasswordPage: TInputQueryWizardPage;
-  NeedPassword, Known, TaskFailed: Boolean;
+  AdminPassword: String;
+  Known, TaskFailed: Boolean;
 
 function InstallFile: String;
 begin
@@ -95,52 +96,19 @@ end;
 function InitializeSetup: Boolean;
 begin
   Known := KnownInstall;
-  { pas d'installation connue : dossier existant mis de côté, donc compte à créer ; sinon, compte déjà créé si la base existe }
-  NeedPassword := (not Known) or not FileExists(ExpandConstant('{commonappdata}\CamSup\data\camsup.db'));
+  { pas de mot de passe demandé : l'utilisateur crée son propre compte à la première ouverture de CamSup.
+    Déploiement sans écran : /MOTDEPASSE=… crée le compte « admin » à la place. }
+  AdminPassword := ExpandConstant('{param:MOTDEPASSE|}');
   Result := True;
-end;
-
-procedure InitializeWizard;
-begin
-  PasswordPage := CreateInputQueryPage(wpSelectDir,
-    'Compte de l''installateur', 'Mot de passe du compte « admin » de CamSup',
-    'Ce compte (rôle intégrateur) sert à configurer CamSup : enregistreurs, caméras, e-mail, comptes des pharmaciens. ' +
-    '10 caractères au moins. Il n''est pas conservé en clair après le premier démarrage.');
-  PasswordPage.Add('Mot de passe :', True);
-  PasswordPage.Add('Confirmation :', True);
-  PasswordPage.Values[0] := ExpandConstant('{param:MOTDEPASSE|}');
-  PasswordPage.Values[1] := PasswordPage.Values[0];
-end;
-
-function ShouldSkipPage(PageID: Integer): Boolean;
-begin
-  Result := (PageID = PasswordPage.ID) and not NeedPassword;
 end;
 
 function PasswordProblem(const Pw: String): String;
 begin
   Result := '';
   if Length(Pw) < 10 then
-    Result := 'Le mot de passe doit faire 10 caractères au moins.'
+    Result := 'Le mot de passe (/MOTDEPASSE=) doit faire 10 caractères au moins.'
   else if (Pos('#', Pw) > 0) or (Pos('"', Pw) > 0) or (Pos('''', Pw) > 0) then
-    Result := 'Le mot de passe ne doit contenir ni # ni guillemets.';
-end;
-
-function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  Problem: String;
-begin
-  Result := True;
-  if CurPageID = PasswordPage.ID then begin
-    Problem := PasswordProblem(PasswordPage.Values[0]);
-    if Problem <> '' then begin
-      MsgBox(Problem, mbError, MB_OK);
-      Result := False;
-    end else if PasswordPage.Values[0] <> PasswordPage.Values[1] then begin
-      MsgBox('Les deux mots de passe sont différents.', mbError, MB_OK);
-      Result := False;
-    end;
-  end;
+    Result := 'Le mot de passe (/MOTDEPASSE=) ne doit contenir ni # ni guillemets.';
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -149,9 +117,8 @@ var
   Params: String;
 begin
   Result := '';
-  { aussi en installation silencieuse (/MOTDEPASSE=), où la page n'est pas validée }
-  if NeedPassword then begin
-    Result := PasswordProblem(PasswordPage.Values[0]);
+  if AdminPassword <> '' then begin
+    Result := PasswordProblem(AdminPassword);
     if Result <> '' then
       exit;
   end;
@@ -175,9 +142,9 @@ begin
   if CurStep <> ssPostInstall then
     exit;
   { lu par CamSup au premier démarrage puis effacé (config.forget_admin_password) ; data\ est déjà protégé }
-  if NeedPassword and (PasswordPage.Values[0] <> '') then begin
+  if (AdminPassword <> '') and not FileExists(ExpandConstant('{commonappdata}\CamSup\data\camsup.db')) then begin
     SetArrayLength(Lines, 1);
-    Lines[0] := 'ADMIN_PASSWORD=' + PasswordPage.Values[0];
+    Lines[0] := 'ADMIN_PASSWORD=' + AdminPassword;
     SaveStringsToUTF8File(InstallFile, Lines, False);
   end;
   if not Exec(PowerShell, '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\installer-tache.ps1') + '"',

@@ -38,5 +38,4 @@ def scrub(text: str) -> str:
     return re.sub(r"(\w+://)[^/@\s]*@", r"\1***@", text or "")
 
 
-ADMIN_PASSWORD = config.ADMIN_PASSWORD or secrets.token_urlsafe(12)
-GENERATED_PASSWORD = not config.ADMIN_PASSWORD
+ADMIN_PASSWORD = config.ADMIN_PASSWORD or secrets.token_urlsafe(12)   # tests ; le lancement n'en génère plus

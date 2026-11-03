@@ -1,0 +1,66 @@
+# Fabrique l'installateur Windows sur un vrai Windows (GitHub), puis l'installe pour vérifier qu'il démarre.
+# Résultat : onglet « Actions » du dépôt > dernière exécution > « Artifacts » > CamSup-Installation (fichier .exe).
+name: Installateur Windows
+
+on:
+  push:
+    branches: [main, securite-durcissement]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Inno Setup (fabrication de l'installateur)
+        run: choco install innosetup -y --no-progress
+
+      - name: Tests sous Windows (informatif)
+        continue-on-error: true
+        run: |
+          python -m pip install -q -r requirements-dev.txt
+          python -m pytest tests -q
+
+      - name: Fabrication (interface, Python et bibliothèques, ffmpeg, installateur)
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
+
+      - name: Installation d'essai sur ce Windows (silencieuse)
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem dist\CamSup-Installation-*.exe | Select-Object -First 1
+          $p = Start-Process $exe.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=install.log' -Wait -PassThru
+          Write-Host "Code de sortie de l'installateur : $($p.ExitCode)"
+          Get-ScheduledTask -TaskName CamSup | Format-List TaskName,State,Principal
+          $ok = $false
+          for ($i = 0; $i -lt 90; $i++) {
+            try { $r = Invoke-WebRequest http://127.0.0.1:8080/api/health -UseBasicParsing -TimeoutSec 3; $ok = $true; break }
+            catch { Start-Sleep 2 }
+          }
+          Write-Host "Serveur joignable : $ok"
+          if ($ok) { Write-Host "Premier lancement (compte à créer) : $((Invoke-WebRequest http://127.0.0.1:8080/api/setup -UseBasicParsing).Content)" }
+          Write-Host "--- droits"; icacls C:\ProgramData\CamSup; icacls C:\ProgramData\CamSup\data
+          Write-Host "--- journaux"; Get-ChildItem C:\ProgramData\CamSup\data\logs -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "== $($_.Name)"; Get-Content $_.FullName -Tail 40 }
+          if ($p.ExitCode -ne 0 -or -not $ok) { exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: CamSup-Installation
+          path: |
+            dist/CamSup-Installation-*.exe
+            install.log
+          if-no-files-found: warn

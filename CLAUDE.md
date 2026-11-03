@@ -83,6 +83,8 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   = logique de rappel (4 h, ou nouveau problème). Heartbeat muet 5 min → « surveillance arrêtée » ; `"arret"` écrit
   à l'arrêt normal → la fenêtre se ferme (uvicorn tue le processus après SIGTERM : le `finally` de `run.main` ne s'exécute pas).
   Essai sans écran : `xvfb-run` + capture `ffmpeg -f x11grab`.
+- Premier compte (03/11/2026) : sans `ADMIN_PASSWORD`, aucun compte n'est créé ; l'interface affiche « Créez votre compte » (`GET/POST /api/setup`, depuis 127.0.0.1 seulement, tant qu'aucun compte n'existe, insertion conditionnelle) → intégrateur connecté aussitôt. L'installateur ne demande plus de mot de passe (`/MOTDEPASSE=` reste possible en silencieux).
+- Fabrication sur un vrai Windows : `.github/workflows/windows.yml` (GitHub Actions : tests, `build.ps1`, installation silencieuse d'essai, `/api/health`, droits, journaux ; installateur en « Artifacts »).
 - `accounts.py` : rôles `integrator` / `pharmacist`, sessions cookie, verrouillage 5 échecs/15 min, CSRF par en-tête
   `X-CamSup: 1`, journal `audit`. Routeurs `main.py` : `public`, `router` (connecté), `admin` (intégrateur).
   Toute route liée à un site passe par `_cam()` / `require_site()` / `site_filter()` (404 hors périmètre).
