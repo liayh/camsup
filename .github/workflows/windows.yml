@@ -1,5 +1,6 @@
 # Fabrique l'installateur Windows sur un vrai Windows (GitHub), puis l'installe pour vérifier qu'il démarre.
-# Résultat : onglet « Actions » du dépôt > dernière exécution > « Artifacts » > CamSup-Installation (fichier .exe).
+# Résultat : lien direct, toujours le même :
+#   https://github.com/liayh/camsup/releases/download/derniere-version/CamSup-Installation-1.1.0.exe
 name: Installateur Windows
 
 on:
@@ -8,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write          # publier l'installateur (« derniere-version »)
 
 jobs:
   windows:
@@ -38,11 +39,24 @@ jobs:
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
 
+      - name: Publication du .exe (lien direct « derniere-version »)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete derniere-version --yes --cleanup-tag || true
+          gh release create derniere-version dist/CamSup-Installation-*.exe --prerelease --target "$GITHUB_SHA" \
+            --title "CamSup — dernière version (${GITHUB_REF_NAME}, ${GITHUB_SHA::7})" \
+            --notes "Installateur Windows fabriqué automatiquement. Double-clic, droits administrateur ; au premier lancement, créez votre compte."
+
       - name: Installation d'essai sur ce Windows (silencieuse)
         shell: powershell
+        timeout-minutes: 15
         run: |
           $exe = Get-ChildItem dist\CamSup-Installation-*.exe | Select-Object -First 1
-          $p = Start-Process $exe.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=install.log' -Wait -PassThru
+          # WaitForExit (pas -Wait : il attendrait aussi la fenêtre d'alerte lancée par l'installateur, qui reste ouverte)
+          $p = Start-Process $exe.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=install.log' -PassThru
+          $p.WaitForExit()
           Write-Host "Code de sortie de l'installateur : $($p.ExitCode)"
           Get-ScheduledTask -TaskName CamSup | Format-List TaskName,State,Principal
           $ok = $false
