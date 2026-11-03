@@ -9,6 +9,13 @@ const COUNTER: Record<number, { label: string; hint: string }> = {
   198: { label: "Secteurs illisibles", hint: "secteurs que le disque n’a pas pu relire" },
   199: { label: "Erreurs de câble (CRC)", hint: "liaison SATA : câble ou connecteur, pas le disque" },
 };
+/** Heures de marche → « 7 ans et 7 mois », « 8 mois », « 1 an » (plus lisible que « 7,7 ans »). */
+export function fmtAge(hours: number): string {
+  const months = Math.round(hours / 730.5);
+  const y = Math.floor(months / 12), m = months % 12;
+  const ys = y ? `${y} an${y > 1 ? "s" : ""}` : "", ms = m ? `${m} mois` : "";
+  return ys && ms ? `${ys} et ${ms}` : ys || ms || "moins d’un mois";
+}
 const day = (ts: number) => new Date(ts * 1000).toLocaleDateString("fr-FR");
 
 /** Teinte d'un compteur : 0 = bon ; en hausse depuis le premier relevé = à remplacer ; stable mais non nul = à surveiller. */
@@ -29,7 +36,7 @@ export function DiskHealth({ d }: { d: Disk }) {
       <div className="row muted small">
         <span>Capacité {fmtBytes(d.total)}{pct !== null ? ` · ${pct} % rempli${pct >= 99 ? " (normal : le NVR écrase les plus anciens)" : ""}` : ""}</span>
         <span>Température {d.temp != null ? `${d.temp} °C` : "—"}</span>
-        <span>Compteur d’heures du disque : {d.hours == null ? "—" : `${Number(d.hours).toLocaleString("fr-FR")} h (${(d.hours / 8760).toFixed(1)} ans)`}</span>
+        <span>Compteur d’heures du disque : {d.hours == null ? "—" : `${fmtAge(d.hours)} (${Number(d.hours).toLocaleString("fr-FR")} h)`}</span>
       </div>
       {d.counters?.length ? (
         <div className="counters">{d.counters.map((c) => {
@@ -93,7 +100,7 @@ export function DiskBanner({ recorders }: { recorders: RecorderHealth[] }) {
                 <div className="db-figures">
                   <span><b>{sectors === null ? "—" : sectors.toLocaleString("fr-FR")}</b> secteur{sectors === 1 ? "" : "s"} défectueux</span>
                   <span><b>{t.d.temp != null ? `${t.d.temp} °C` : "—"}</b> température</span>
-                  <span><b>{t.d.hours == null ? "—" : `${(t.d.hours / 8760).toFixed(1)} ans`}</b> de marche (compteur du disque)</span>
+                  <span><b>{t.d.hours == null ? "—" : fmtAge(t.d.hours)}</b> de marche</span>
                 </div>
               )}
             </div>

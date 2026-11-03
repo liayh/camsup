@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badSectors, counterTone, diskVerdict } from "./DiskHealth";
+import { badSectors, counterTone, diskVerdict, fmtAge } from "./DiskHealth";
 import type { Disk } from "../api/types";
 
 describe("teinte des secteurs défectueux", () => {
@@ -34,5 +34,14 @@ describe("verdict du bandeau des disques", () => {
   it("à remplacer : la raison est affichée", () => {
     const d = disk({ level: "bad", issues: ["secteurs réalloués en hausse : 8 → 12"] });
     expect(diskVerdict(d)).toEqual({ tone: "bad", title: "À remplacer", text: "secteurs réalloués en hausse : 8 → 12" });
+  });
+});
+
+describe("âge du disque en clair", () => {
+  it("ans et mois", () => {
+    expect(fmtAge(7 * 8766 + 7 * 730.5)).toBe("7 ans et 7 mois");
+    expect(fmtAge(8766)).toBe("1 an");
+    expect(fmtAge(5 * 730.5)).toBe("5 mois");
+    expect(fmtAge(100)).toBe("moins d’un mois");
   });
 });
