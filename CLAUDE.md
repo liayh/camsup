@@ -52,6 +52,12 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   mémoire (`_jobs`) + `data/previews`, effacés 1 h après la dernière demande et au démarrage. Mesuré : 3 caméras en
   copie prêtes en 13–25 s ; 1 caméra convertie en 32 s (PC 16 cœurs). Lecture H.265 sous Windows : non vérifiée.
   Heure affichée sous la vidéo ≈ ±3 s (l'heure incrustée dans l'image fait foi).
+- Échanges accélérés (03/11/2026, non mesurés sur le vrai NVR) : `devicehttp` garde les connexions ouvertes (une
+  `requests.Session` par fil), réutilise l'authentification Digest (`devicehttp.digest` : plus de 401 avant chaque
+  requête) et retient 10 min un port HTTP en panne (directement en HTTPS, `http_dead`, aussi pour `dahuarpc._base`) ;
+  `nvrwatch._last_record` ne cherche que depuis la dernière fin connue − 10 min (`_known_end`), recherche 24 h si rien ;
+  écart d'horloge du NVR réutilisé s'il a moins de 60 s (`nvrwatch.clock_offset`, utilisé par `export._offset`) ;
+  SMART relu toutes les 10 min (`storage._smart`, l'état des disques reste relu toutes les 30 s).
 - `dahuarpc.Session` : connexion RPC2 (défi MD5). `dahuarpc.shared()` garde une session ouverte par NVR pour
   `storage` et `nvrwatch` (keepAlive après 20 s ; refaite après une erreur) : avant, ≈ 380 connexions/h dans le
   journal du NVR, après 0 (mesuré le 30/10/2026). `close_all()` à l'arrêt.

@@ -36,6 +36,10 @@ class Session:
 
     def _base(self) -> str:
         base = f"http://{self.host}:{self.port}"
+        if devicehttp.http_dead(self.host):              # port HTTP en panne il y a peu : pas d'attente inutile
+            known = devicehttp.https_base(self.host)
+            if known:
+                return known
         try:
             r = self.http.get(base + "/", timeout=self.timeout, allow_redirects=False)
         except (requests.ConnectionError, requests.Timeout):          # port HTTP muet : HTTPS directement

@@ -225,7 +225,10 @@ def test_redirection_vers_autre_hote_refusee(monkeypatch):
         is_redirect, headers, status_code = True, {"Location": "http://attaquant.example/x"}, 302
         def close(self): pass
 
-    monkeypatch.setattr(requests, "request", lambda *a, **k: R())
+    class S:
+        def request(self, *a, **k): return R()
+
+    monkeypatch.setattr(devicehttp, "_session", lambda: S())
     monkeypatch.setattr(devicehttp, "https_variant", lambda url: None)
     with pytest.raises(requests.ConnectionError):
         devicehttp.request("GET", "http://10.0.0.1/cgi-bin/x")

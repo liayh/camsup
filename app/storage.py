@@ -16,7 +16,7 @@ import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 
-from requests.auth import HTTPBasicAuth, HTTPDigestAuth
+from requests.auth import HTTPBasicAuth
 
 from . import alerting, cameras, dahuarpc, db, devicehttp, security
 
@@ -30,7 +30,7 @@ def device_get(url: str, user: str, pw: str, raw: bool = False, timeout: int = 1
     """GET authentifié (Digest). `basic=True` (Hikvision anciens) : repli sur l'authentification Basic, qui envoie le
     mot de passe tel quel, seulement si la réponse vient en HTTPS ; jamais en HTTP clair."""
     # verify=False : les enregistreurs ont un certificat auto-signé (Dahua redirige le CGI de stockage vers HTTPS)
-    r = devicehttp.request("GET", url, auth=HTTPDigestAuth(user, pw), timeout=timeout)   # repli HTTPS si besoin
+    r = devicehttp.request("GET", url, auth=devicehttp.digest(user, pw), timeout=timeout)   # repli HTTPS si besoin
     if r.status_code == 401 and basic and r.url.startswith("https://"):
         r = devicehttp.request("GET", r.url, auth=HTTPBasicAuth(user, pw), timeout=timeout)
     if r.status_code == 401:
@@ -101,6 +101,28 @@ def _hik(host: str, port: int, user: str, pw: str) -> list[dict]:
     return disks
 
 
+SMART_SECONDS = 600                     # SMART (secteurs, température…) relu toutes les 10 min ; l'état du disque, à chaque relevé
+_smart_cache: dict[tuple, tuple[float, list]] = {}
+
+
+def _smart(s: "dahuarpc.Session", host: str, d: dict) -> list | None:
+    """Valeurs SMART d'un disque, relues au plus toutes les `SMART_SECONDS` : elles évoluent lentement, et chaque
+    lecture coûte 3 appels par disque au NVR toutes les 30 s."""
+    key = (host, d["name"], d.get("serial", ""))
+    hit = _smart_cache.get(key)
+    if hit and time.time() - hit[0] < SMART_SECONDS:
+        return hit[1]
+    obj = s.call("devStorage.factory.instance", {"name": d["name"]}).get("result")
+    if not obj:
+        return None
+    try:
+        vals = (s.call("devStorage.getSmartValue", None, obj).get("params") or {}).get("values", [])
+    finally:
+        s.call("devStorage.destroy", None, obj)
+    _smart_cache[key] = (time.time(), vals)
+    return vals
+
+
 def _dahua_rpc(host: str, port: int, user: str, pw: str) -> list[dict]:
     """Même API que l'interface web du NVR (lecture seule)."""
     with dahuarpc.shared(host, port, user, pw) as s:
@@ -113,10 +135,8 @@ def _dahua_rpc(host: str, port: int, user: str, pw: str) -> list[dict]:
             d = _disk(dev.get("Name", "?"), state, state in ("Running", "Success") and
                       all(x.get("Status", "LvAvailable") == "LvAvailable" for x in parts),
                       total, max(0, total - free), model=dev.get("Module", ""), serial=dev.get("SerialNo", ""))
-            obj = s.call("devStorage.factory.instance", {"name": d["name"]}).get("result")
-            if obj:
-                vals = (s.call("devStorage.getSmartValue", None, obj).get("params") or {}).get("values", [])
-                s.call("devStorage.destroy", None, obj)
+            vals = _smart(s, host, d)
+            if vals is not None:
                 for v in vals:
                     raw = int(re.match(r"\d*", str(v.get("Raw", "0")))[0] or 0)
                     d["smart"].append({"id": v.get("ID"), "name": v.get("Name", ""), "current": v.get("Current", 0),

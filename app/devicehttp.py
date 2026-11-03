@@ -6,18 +6,44 @@ celui qui répond, pendant `CACHE_SECONDS`. Certificats auto-signés acceptés (
 Redirections : suivies seulement vers le même hôte (le NVR renvoie son CGI vers HTTPS) ; jamais vers un autre, qui
 recevrait la réponse d'authentification (ou servirait à joindre une autre machine depuis le poste).
 """
+import hashlib
 import threading
 import time
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 import urllib3
+from requests.auth import HTTPDigestAuth
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 HTTPS_PORTS = (443, 8080, 8443)
 CACHE_SECONDS = 600
 _cache: dict[str, tuple[str, float]] = {}       # hôte → (« https://hôte:port », horodatage)
+_http_dead: dict[str, float] = {}               # hôte → instant où son port HTTP n'a pas répondu
 _lock = threading.Lock()
+_local = threading.local()                      # sessions par fil d'exécution (requests.Session n'est pas partageable)
+_auths: dict[tuple, HTTPDigestAuth] = {}
+
+
+def digest(user: str, pw: str) -> HTTPDigestAuth:
+    """Authentification Digest gardée par compte : après le premier défi du NVR, les requêtes suivantes partent
+    directement avec la réponse (sinon chaque requête est d'abord refusée en 401 puis renvoyée : deux allers-retours)."""
+    key = (user, hashlib.sha256(pw.encode()).hexdigest())
+    with _lock:
+        auth = _auths.get(key)
+        if auth is None:
+            auth = _auths[key] = HTTPDigestAuth(user, pw)
+        return auth
+
+
+def _session() -> requests.Session:
+    """Connexions gardées ouvertes (keep-alive) : pas de nouvelle connexion ni de nouvelle négociation HTTPS à chaque
+    requête vers le NVR."""
+    s = getattr(_local, "session", None)
+    if s is None:
+        s = _local.session = requests.Session()
+        s.trust_env = False                     # NVR du réseau local : jamais par un proxy
+    return s
 
 
 def https_base(host: str, timeout: float = 4) -> str | None:
@@ -57,7 +83,7 @@ def _send(method: str, url: str, **kw) -> requests.Response:
     """Requête dont les redirections ne sont suivies que vers le même hôte."""
     host = urlsplit(url).hostname
     for _ in range(MAX_REDIRECTS + 1):
-        r = requests.request(method, url, allow_redirects=False, **kw)
+        r = _session().request(method, url, allow_redirects=False, **kw)
         if not r.is_redirect:
             return r
         nxt = urljoin(url, r.headers.get("Location", ""))
@@ -69,10 +95,24 @@ def _send(method: str, url: str, **kw) -> requests.Response:
     raise requests.ConnectionError("trop de redirections")
 
 
+def http_dead(host: str) -> bool:
+    """Le port HTTP de cet hôte a-t-il échoué il y a moins de `CACHE_SECONDS` ?"""
+    with _lock:
+        t = _http_dead.get(host)
+    return t is not None and time.time() - t < CACHE_SECONDS
+
+
 def request(method: str, url: str, **kw) -> requests.Response:
-    """Comme `requests.request`, avec repli HTTPS si la connexion HTTP échoue (refusée, injoignable)."""
+    """Comme `requests.request`, avec repli HTTPS si la connexion HTTP échoue (refusée, injoignable). Un port HTTP
+    qui vient d'échouer n'est pas réessayé pendant `CACHE_SECONDS` : directement en HTTPS (sinon chaque requête
+    attendrait d'abord l'échec du HTTP, jusqu'au délai de connexion)."""
     kw.setdefault("verify", False)
     kw.pop("allow_redirects", None)
+    host = urlsplit(url).hostname
+    if urlsplit(url).scheme == "http" and http_dead(host):
+        alt = https_variant(url)
+        if alt:
+            return _send(method, alt, **kw)
     try:
         return _send(method, url, **kw)
     except (requests.ConnectionError, requests.Timeout) as e:
@@ -81,4 +121,6 @@ def request(method: str, url: str, **kw) -> requests.Response:
         alt = https_variant(url)
         if not alt:
             raise
+        with _lock:
+            _http_dead[host] = time.time()
         return _send(method, alt, **kw)

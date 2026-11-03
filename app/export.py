@@ -22,8 +22,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
-from requests.auth import HTTPDigestAuth
-
 from . import config, db, devicehttp, nvrwatch, security
 
 log = logging.getLogger("export")
@@ -111,7 +109,7 @@ def _download(cam: dict, pw: str, start: datetime, end: datetime, dest: Path) ->
     f = lambda d: quote(d.strftime(nvrwatch.FMT))                         # noqa: E731
     url = (f"http://{cam['host']}:{cam['port_http']}/cgi-bin/loadfile.cgi?action=startLoad&channel={cam['channel']}"
            f"&startTime={f(start)}&endTime={f(end)}&subtype=0")
-    with devicehttp.request("GET", url, auth=HTTPDigestAuth(cam["username"], pw), stream=True, timeout=(10, 60)) as r:
+    with devicehttp.request("GET", url, auth=devicehttp.digest(cam["username"], pw), stream=True, timeout=(10, 60)) as r:
         if r.status_code == 400:
             raise ExportError("aucun enregistrement sur cette période")
         if r.status_code == 401:
@@ -164,7 +162,11 @@ def _safe(name: str) -> str:
 
 
 def _offset(cam: dict, pw: str) -> int:
-    """Avance (+) ou retard (−) de l'horloge du NVR sur celle du PC, en secondes."""
+    """Avance (+) ou retard (−) de l'horloge du NVR sur celle du PC, en secondes : celle mesurée par la surveillance
+    il y a moins d'une minute (relevé toutes les 10 s), sinon demandée au NVR."""
+    known = nvrwatch.clock_offset(cam["host"])
+    if known is not None:
+        return known
     r = nvrwatch.probe(cam["host"], cam["port_http"], cam["username"], pw, timeout=10)
     return round((datetime.strptime(r["time"], nvrwatch.FMT) - datetime.now()).total_seconds())
 

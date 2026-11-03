@@ -23,7 +23,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import requests
-from requests.auth import HTTPDigestAuth
 
 from . import alerting, cameras, config, dahuarpc, db, devicehttp, security
 
@@ -70,9 +69,30 @@ def _files(s: dahuarpc.Session, channel: int, start: datetime, end: datetime) ->
         s.call("mediaFileFind.destroy", None, obj)
 
 
-def _last_record(s: dahuarpc.Session, channel: int, nvr_now: datetime) -> str | None:
-    """Fin du dernier enregistrement du canal (1-based) sur 24 h, à l'heure du NVR, ou None."""
-    return max((b for _, b in _files(s, channel, nvr_now - timedelta(hours=24), nvr_now)), default=None)
+SEARCH_MARGIN = timedelta(minutes=10)       # recherche à partir de la dernière fin connue moins cette marge
+_known_end: dict[tuple[str, int], datetime] = {}    # (hôte, canal) → fin du dernier enregistrement vue (heure du NVR)
+_clock: dict[str, tuple[float, float]] = {}         # hôte → (avance de l'horloge du NVR en s, instant du relevé)
+
+
+def _last_record(s: dahuarpc.Session, channel: int, nvr_now: datetime, since: datetime | None = None) -> str | None:
+    """Fin du dernier enregistrement du canal (1-based) sur 24 h, à l'heure du NVR, ou None.
+
+    `since` : dernière fin déjà connue ; on ne cherche alors que depuis peu avant (quelques fichiers au lieu de la
+    liste des 24 h, à chaque relevé et pour chaque caméra). Rien trouvé dans cette fenêtre : recherche complète."""
+    day_ago = nvr_now - timedelta(hours=24)
+    if since is not None and day_ago < since - SEARCH_MARGIN <= nvr_now:
+        found = max((b for _, b in _files(s, channel, since - SEARCH_MARGIN, nvr_now)), default=None)
+        if found is not None:
+            return found
+    return max((b for _, b in _files(s, channel, day_ago, nvr_now)), default=None)
+
+
+def clock_offset(host: str, max_age: float = 60) -> int | None:
+    """Avance (+) ou retard (−) de l'horloge du NVR sur le PC, mesurée par la surveillance il y a moins de `max_age` s
+    (évite de réinterroger le NVR avant chaque morceau de vidéo) ; None si trop ancienne."""
+    with _lock:
+        hit = _clock.get(host)
+    return round(hit[0]) if hit and time.time() - hit[1] <= max_age else None
 
 
 def recordings(host: str, port: int, user: str, pw: str, channels: list[int], start: datetime, end: datetime,
@@ -99,10 +119,19 @@ def probe(host: str, port: int, user: str, pw: str, channels: list[int] | None =
     dernier enregistrement de ces canaux (recherche plus lourde)."""
     with dahuarpc.shared(host, port, user, pw, timeout) as s:
         nvr_now = datetime.strptime(s.params("global.getCurrentTime")["time"], FMT)
+        with _lock:
+            _clock[host] = ((nvr_now - datetime.now()).total_seconds(), time.time())
         states = s.params("LogicDeviceManager.getCameraState", {"uniqueChannels": [-1]}).get("states") or []
         out = {"time": nvr_now.strftime(FMT), "conn": {int(x["channel"]) + 1: x.get("connectionState", "") for x in states}}
         if channels is not None:
-            out["last"] = {ch: _last_record(s, ch, nvr_now) for ch in channels}
+            out["last"] = {}
+            for ch in channels:
+                last = _last_record(s, ch, nvr_now, _known_end.get((host, ch)))
+                out["last"][ch] = last
+                if last:
+                    _known_end[(host, ch)] = datetime.strptime(last, FMT)
+                else:
+                    _known_end.pop((host, ch), None)
         return out
 
 
@@ -132,7 +161,7 @@ def config_backup(host: str, port: int, user: str, pw: str) -> bytes:
     """Fichier de configuration complet du NVR (celui de « Sauvegarde de la configuration » de son interface) :
     JSON d'environ 1 Mo, vérifié le 31/10/2026 sur DHI-NVR5216-16P-4KS2E. Contient les identifiants des caméras IP."""
     with devicehttp.request("GET", f"http://{host}:{port}/cgi-bin/Config.backup?action=All",
-                            auth=HTTPDigestAuth(user, pw), timeout=(10, 60), stream=True) as r:
+                            auth=devicehttp.digest(user, pw), timeout=(10, 60), stream=True) as r:
         if r.status_code == 401:
             raise RuntimeError("Authentification refusée (configuration)")
         r.raise_for_status()
