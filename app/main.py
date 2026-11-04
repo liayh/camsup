@@ -335,7 +335,8 @@ def overview(user: User = Me):
         "cameras": [cameras.public(c) for c in cams],
         "alerts": _alerts(user, False, 200),
         "recorders": [r for r in storage.snapshot() if user.can_site(r["site_id"])],
-        "nvr": [n for n in nvrwatch.snapshot() if user.can_site(n["site_id"])],
+        "nvr": [n if user.is_integrator else {k: v for k, v in n.items() if k != "detail"}
+                for n in nvrwatch.snapshot() if user.can_site(n["site_id"])],
         "email": mail.configured(),
         "export_max_minutes": config.EXPORT_MAX_MINUTES,
         "config_saved": ({r["key"].split(":", 1)[1]: int(r["value"]) for r in

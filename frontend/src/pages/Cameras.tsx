@@ -231,6 +231,7 @@ export default function Cameras() {
                 <DiskDiagnostic host={host} /></>}
             </div>
             {w?.error && <div className="error-text">Enregistreur : {w.error}</div>}
+            {w?.error && w.detail && <div className="muted small">Détail technique (pour l’assistance) : <code>{w.detail}</code></div>}
             {admin && brand === "dahua" && <details className="small"><summary>Configuration du NVR</summary><NvrConfig host={host} site={cur.name} /></details>}
             {health?.error && !health.disks.length && <div className="error-text">Disques : {health.error}</div>}
             {health?.disks.map((d) => <DiskHealth key={d.name} d={d} />)}

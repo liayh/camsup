@@ -21,7 +21,7 @@ export interface Disk {
 export interface RecorderHealth { brand: string; host: string; site_id: number; last_check: number; disks: Disk[]; error: string }
 
 export interface NvrCamera { id: number; name: string; channel: number; state: string; last_record: string | null }
-export interface NvrWatch { host: string; site_id: number; site: string; checked: number; error: string; nvr_time: string; cameras: NvrCamera[] }
+export interface NvrWatch { host: string; site_id: number; site: string; checked: number; error: string; detail?: string; nvr_time: string; cameras: NvrCamera[] }
 
 export interface Alert { id: number; key: string; camera_id: number | null; site_id: number | null; kind: string; message: string; opened_ts: number; closed_ts: number | null }
 
