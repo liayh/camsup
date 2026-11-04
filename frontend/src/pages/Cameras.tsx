@@ -235,6 +235,8 @@ export default function Cameras() {
             {admin && brand === "dahua" && <details className="small"><summary>Configuration du NVR</summary><NvrConfig host={host} site={cur.name} /></details>}
             {health?.error && !health.disks.length && <div className="error-text">Disques : {health.error}</div>}
             {health?.disks.map((d) => <DiskHealth key={d.name} d={d} />)}
+            {admin && brand === "dahua" && <div className="row small"><span className="muted">Détail des disques en clair (capacité, compteurs de santé) :</span>
+              <DiskDiagnostic host={host} /></div>}
             <table>
               <thead><tr><th>Caméra</th><th>Canal</th><th>État</th><th>Dernier enregistrement</th>{admin && <th />}</tr></thead>
               <tbody>{[...list].sort((a, b) => a.channel - b.channel).map((c) => {

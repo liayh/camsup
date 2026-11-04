@@ -35,7 +35,7 @@ export default function Dashboard() {
         <button className="btn small" onClick={reload}>Actualiser</button>
       </PageHeader>
       {!d.email && admin && <Notice tone="warn">E-mail non configuré : les alertes ne s’affichent que sur ce poste (voir Paramètres).</Notice>}
-      <DiskBanner recorders={recorders} />
+      <DiskBanner recorders={recorders} admin={admin} />
       <div className="split">
         <div className="split-main">
           <div className="stats">

@@ -1,5 +1,6 @@
 import type { Disk, RecorderHealth } from "../api/types";
 import { fmtBytes } from "../format";
+import { DiskDiagnostic } from "./NvrConfig";
 import { Badge } from "./ui";
 
 const LEVEL: Record<string, ["ok" | "warn" | "bad", string]> = { ok: ["ok", "Bon état"], warn: ["warn", "À surveiller"], bad: ["bad", "À remplacer"] };
@@ -76,7 +77,7 @@ export function diskVerdict(d: Disk): { tone: "ok" | "warn" | "bad"; title: stri
 }
 
 /** Bandeau « Santé des disques durs » : un verdict en gros par disque, en tête du tableau de bord. */
-export function DiskBanner({ recorders }: { recorders: RecorderHealth[] }) {
+export function DiskBanner({ recorders, admin = false }: { recorders: RecorderHealth[]; admin?: boolean }) {
   const tiles: { key: string; tone: "ok" | "warn" | "bad" | "info"; title: string; text: string; d?: Disk }[] = [];
   for (const r of recorders) {
     if (!r.disks.length) tiles.push({ key: r.host, tone: r.error ? "bad" : "info", title: r.error ? "Disques illisibles" : "Aucun disque",
@@ -87,7 +88,8 @@ export function DiskBanner({ recorders }: { recorders: RecorderHealth[] }) {
   return (
     <section className={`card disk-banner db-${worst}`} aria-label="Santé des disques durs">
       <div className="row"><h2>Santé des disques durs</h2><span className="grow" />
-        <span className="muted small">secteurs défectueux, température et usure lus sur le NVR (SMART)</span></div>
+        <span className="muted small">secteurs défectueux, température et usure lus sur le NVR (SMART)</span>
+        {admin && [...new Set(recorders.filter((r) => r.brand === "dahua").map((r) => r.host))].map((h) => <DiskDiagnostic key={h} host={h} />)}</div>
       {!tiles.length ? <p className="muted">Premier relevé dans les 30 secondes qui suivent le démarrage.</p> : (
         <div className="db-tiles">{tiles.map((t) => {
           const sectors = t.d ? badSectors(t.d) : null;
