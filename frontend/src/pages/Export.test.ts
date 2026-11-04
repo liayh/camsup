@@ -91,3 +91,18 @@ describe("vue sur plusieurs jours", () => {
     expect(dayStart(sunday, 1) - m).toBe((new Date(2026, 9, 26).getTime() - new Date(2026, 9, 25).getTime()) / 1000);
   });
 });
+
+import { camTile } from "./Dashboard";
+import type { Camera } from "../api/types";
+
+describe("tuiles du mur de caméras", () => {
+  const cam = (o: Partial<Camera>): Camera => ({ id: 1, site_id: 1, name: "CAM 1", brand: "dahua", host: "h", port_http: 80,
+    username: "u", channel: 1, enabled: 1, online: 1, last_check: 1, error: null, ...o });
+  it("en ligne, déconnectée, n'enregistre plus, NVR injoignable", () => {
+    expect(camTile(cam({}), [], "2026-11-04 15:20:01", false)).toMatchObject({ tone: "ok", status: "EN LIGNE" });
+    expect(camTile(cam({ online: 0 }), [], null, false)).toMatchObject({ tone: "bad", status: "DÉCONNECTÉE", title: "AUCUN SIGNAL" });
+    const rec = { id: 9, key: "rec:1", camera_id: 1, site_id: 1, kind: "rec", message: "Pharma : CAM 1 n'est plus enregistrée depuis 19:34", opened_ts: 1, closed_ts: null };
+    expect(camTile(cam({}), [rec], null, false)).toMatchObject({ tone: "warn", note: "CAM 1 n'est plus enregistrée depuis 19:34" });
+    expect(camTile(cam({}), [], null, true)).toMatchObject({ tone: "bad", status: "INCONNU" });
+  });
+});

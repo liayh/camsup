@@ -817,7 +817,7 @@ def health():
 
 # ------------------------------------------------------------------ interface (React, `cd frontend && npm run build`)
 SPA = STATIC / "app"
-SPA_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+SPA_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; "
            "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 _SPA_ROUTES = {"video", "sites", "cameras", "alertes", "enregistreurs", "utilisateurs", "parametres"}
 
