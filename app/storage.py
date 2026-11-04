@@ -204,6 +204,60 @@ def _dahua_rpc(host: str, port: int, user: str, pw: str) -> list[dict]:
         return disks
 
 
+# Noms en clair des compteurs SMART courants ; `watch` : compteur qui doit rester à 0 (sinon le disque s'abîme)
+SMART_NAMES = {
+    1: ("Erreurs de lecture (taux)", False), 3: ("Temps de démarrage", False), 4: ("Démarrages / arrêts", False),
+    5: ("Secteurs réalloués", True), 7: ("Erreurs de positionnement (taux)", False), 9: ("Heures de marche", False),
+    10: ("Essais de démarrage", True), 12: ("Mises sous tension", False), 183: ("Ralentissements SATA", False),
+    184: ("Erreurs de bout en bout", True), 187: ("Erreurs non corrigées", True), 188: ("Délais de commande dépassés", False),
+    189: ("Écritures en hauteur anormale", False), 190: ("Température (flux d'air)", False), 191: ("Chocs détectés", False),
+    192: ("Arrêts brusques (coupures)", False), 193: ("Cycles de tête", False), 194: ("Température", False),
+    195: ("Corrections ECC", False), 196: ("Réallocations", True), 197: ("Secteurs en attente", True),
+    198: ("Secteurs illisibles", True), 199: ("Erreurs de câble (CRC)", False), 200: ("Erreurs d'écriture", True),
+}
+
+
+def diagnostic_summary(rpc: dict) -> dict:
+    """Résumé lisible des réponses RPC2 brutes (`diagnostic`) : NVR, puis chaque disque avec taille, partitions et
+    compteurs SMART nommés et jugés (bon / à surveiller / défaillant)."""
+    def val(x):
+        return (x or {}).get("params") if isinstance(x, dict) else None
+    model = val(rpc.get("modele")) or {}
+    version = val(rpc.get("version")) or {}
+    out = {"modele": model.get("type", ""), "version": version.get("version", ""), "disques": []}
+    for dev in (val(rpc.get("disques")) or {}).get("device", []) or []:
+        if not isinstance(dev, dict):
+            continue
+        parts = [x for x in (dev.get("Partitions") or []) if isinstance(x, dict)]
+        total = sum(to_bytes(x.get("Total")) for x in parts) or to_bytes(dev.get("Capacity"))
+        free = sum(to_bytes(x.get("Remain")) for x in parts)
+        smart = []
+        for v in ((val((rpc.get("smart") or {}).get(dev.get("Name"))) or {}).get("values") or []):
+            if not isinstance(v, dict):
+                continue
+            ident, raw = v.get("ID"), smart_raw(v.get("Raw", 0))
+            name, watch = SMART_NAMES.get(ident, (v.get("Name") or f"Attribut {ident}", False))
+            cur, thr = v.get("Current", 0), v.get("Threshold", 0)
+            if thr and cur and cur <= thr:
+                state = "defaillant"
+            elif v.get("Predict"):
+                state = "defaillant"
+            elif watch and raw > 0:
+                state = "surveiller"
+            else:
+                state = "bon"
+            shown = (power_on_hours(raw) if ident == 9 else raw & 0xFF if ident in (190, 194) else raw)
+            smart.append({"id": ident, "nom": name, "valeur": shown, "brut": v.get("Raw"), "actuel": cur,
+                          "pire": v.get("Worst", 0), "seuil": thr, "etat": state})
+        out["disques"].append({
+            "nom": dev.get("Name", "?"), "modele": dev.get("Module", ""), "serie": dev.get("SerialNo", ""),
+            "etat": dev.get("State", ""), "taille": total, "libre": free, "reel": phantom_ok(dev, total),
+            "partitions": [{"nom": x.get("Name", ""), "taille": to_bytes(x.get("Total")), "libre": to_bytes(x.get("Remain")),
+                            "etat": x.get("Status", "")} for x in parts],
+            "smart": smart})
+    return out
+
+
 def diagnostic(host: str, port: int, user: str, pw: str) -> dict:
     """Ce que le NVR renvoie sur ses disques, tel quel (aucun mot de passe), pour corriger un modèle mal lu :
     modèle et version du NVR, réponse RPC2 (disques + SMART), réponse CGI, et ce que CamSup en déduit."""
@@ -232,6 +286,7 @@ def diagnostic(host: str, port: int, user: str, pw: str) -> dict:
     attempt("cgi", lambda: device_get(f"http://{host}:{port}/cgi-bin/storageDevice.cgi?action=getDeviceAllInfo",
                                        user, pw)[:200_000])
     attempt("lu_par_camsup", lambda: _dahua_rpc(host, port, user, pw))
+    out["resume"] = diagnostic_summary(out["rpc2"]) if isinstance(out.get("rpc2"), dict) and "erreur" not in out["rpc2"] else None
     return out
 
 

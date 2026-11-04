@@ -647,11 +647,15 @@ def create_preview(body: PreviewIn, request: Request, user: User = Me):
 
 
 @admin.get("/nvr/disks/diagnostic")
-def nvr_disks_diagnostic(host: str, request: Request):
-    """Diagnostic des disques (intégrateur) : réponses brutes du NVR, à envoyer pour corriger une lecture fausse."""
+def nvr_disks_diagnostic(host: str, request: Request, fichier: bool = False):
+    """Diagnostic des disques (intégrateur) : résumé lisible (fenêtre de l'interface) et, avec `fichier=1`, les
+    réponses brutes du NVR en fichier, à envoyer pour corriger une lecture fausse."""
     c = _nvr_cams(request.state.user, host)[0]
     data = storage.diagnostic(c["host"], c["port_http"], c["username"], security.decrypt(c["password_enc"]))
     accounts.audit_req(request, "nvr.diagnostic_disques", c["site_id"], c["host"])
+    if not fichier:
+        return {"host": c["host"], "date": data["date"], "resume": data.get("resume"),
+                "erreur": (data.get("rpc2") or {}).get("erreur") if isinstance(data.get("rpc2"), dict) else None}
     name = re.sub(r"[^\w-]", "_", f"Diagnostic_disques_{c['host']}_{datetime.now():%Y-%m-%d_%Hh%M}")
     return Response(json.dumps(data, ensure_ascii=False, indent=1, default=str), media_type="application/json",
                     headers={"Content-Disposition": f'attachment; filename="{name}.json"', "Cache-Control": "no-store"})

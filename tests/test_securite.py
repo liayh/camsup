@@ -323,3 +323,20 @@ def test_echec_passager_garde_le_dernier_releve(monkeypatch):
         assert storage._state[key]["disks"] and not storage._state[key]["error"]
     storage._poll(key, [cam])
     assert storage._state[key]["error"]
+
+
+def test_diagnostic_des_disques_lisible():
+    """Données réelles d'un client (03/11/2026) : un disque de 4 To découpé en 4 partitions par le NVR."""
+    from app import storage
+    part = lambda n: {"Status": "LvAvailable", "Total": 995715186688, "Remain": 0, "Name": f"/dev/sda{n}"}
+    rpc = {"modele": {"params": {"type": "DHI-NVR"}}, "version": {"params": {"version": "3.2"}},
+           "disques": {"params": {"device": [{"Name": "/dev/sda", "State": "Success", "SerialNo": "X",
+                                              "Partitions": [part(i) for i in range(4)]}]}},
+           "smart": {"/dev/sda": {"params": {"values": [{"ID": 5, "Raw": "0", "Current": 200, "Threshold": 140},
+                                                         {"ID": 197, "Raw": "2", "Current": 200, "Threshold": 0},
+                                                         {"ID": 9, "Raw": "66475", "Current": 9, "Threshold": 0}]}}}}
+    d = storage.diagnostic_summary(rpc)["disques"][0]
+    assert d["taille"] == 4 * 995715186688 and len(d["partitions"]) == 4 and d["libre"] == 0
+    etats = {x["id"]: x["etat"] for x in d["smart"]}
+    assert etats == {5: "bon", 197: "surveiller", 9: "bon"}
+    assert [x["nom"] for x in d["smart"]] == ["Secteurs réalloués", "Secteurs en attente", "Heures de marche"]

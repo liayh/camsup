@@ -92,7 +92,7 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   fois le RPC2 vu (`storage._rpc_ok`), dernier relevé gardé pendant `STALE_FAILS` échecs, SMART illisible = dernier
   relevé, emplacements vides masqués (`phantom_ok`), tailles en Mo des vieux NVR (`to_bytes`), valeurs brutes en hexa
   (`smart_raw`), heures sur 32 bits (`power_on_hours`) ; bouton « Diagnostic des disques » (`/nvr/disks/diagnostic`,
-  réponses brutes du NVR) pour corriger un modèle mal lu. **Cause exacte non confirmée** : attendre le diagnostic.
+  réponses brutes du NVR) : fenêtre en clair (`storage.diagnostic_summary` : capacité, partitions, compteurs SMART nommés et jugés, avertissement au-delà de 5 ans) + fichier technique (`?fichier=1`). Diagnostic réel reçu le 04/11/2026 : 1 disque `/dev/sda` de 4 To en 4 partitions de 996 Go, pleines (normal).
   Interface : `ErrorBoundary` (plus de page blanche).
 - `accounts.py` : rôles `integrator` / `pharmacist`, sessions cookie, verrouillage 5 échecs/15 min, CSRF par en-tête
   `X-CamSup: 1`, journal `audit`. Routeurs `main.py` : `public`, `router` (connecté), `admin` (intégrateur).
