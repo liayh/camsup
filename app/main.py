@@ -3,16 +3,19 @@
 Accès : `accounts.current_user` sur toutes les routes /api. Les ressources d'un site non attribué répondent 404
 (cloisonnement entre pharmacies). Les modifications sont tracées dans le journal d'audit.
 """
+import asyncio
+import time
 import ipaddress
 import json
 import logging
 import re
+from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -561,6 +564,63 @@ def camera_live(cid: int, request: Request, user: User = Me):
         raise HTTPException(503, str(e))
     return StreamingResponse(live.mjpeg(s), media_type="multipart/x-mixed-replace; boundary=image",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.websocket("/api/live/ws")
+async def live_ws(ws: WebSocket, ids: str = ""):
+    """Mur de caméras en direct : une seule connexion, chaque image envoyée dès qu'elle arrive (pas d'attente entre
+    deux demandes). Message binaire = n° de caméra (4 octets) + image JPEG ; message texte = erreur d'une caméra.
+    Compte connecté obligatoire (cookie), même origine seulement (une page d'un autre site ne peut pas l'ouvrir),
+    caméras de ses pharmacies seulement."""
+    origin = ws.headers.get("origin")
+    if origin and urlsplit(origin).netloc != ws.headers.get("host"):
+        await ws.close(code=1008)
+        return
+    token = ws.cookies.get(accounts.COOKIE)
+    user = accounts.session_user(token)
+    if not user:
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    streams: dict[int, live.Stream] = {}
+    told: set[int] = set()
+    try:
+        for part in ids.split(",")[:live.MAX_STREAMS]:
+            if not part.strip().isdigit():
+                continue
+            cam = db.one("SELECT * FROM cameras WHERE id=?", (int(part),))
+            if not cam or not user.can_site(cam["site_id"]) or cam["brand"] != "dahua" or not cam["enabled"]:
+                continue
+            try:
+                streams[cam["id"]] = live.acquire(cam, security.decrypt(cam["password_enc"]))
+            except RuntimeError as e:
+                await ws.send_json({"id": cam["id"], "error": str(e)})
+        last: dict[int, int] = {}
+        checked = time.time()
+        while True:
+            for cid, st in streams.items():
+                with st.lock:
+                    frame, n = st.frame, st.seq
+                if frame is not None and last.get(cid) != n:
+                    last[cid] = n
+                    await ws.send_bytes(cid.to_bytes(4, "big") + frame)
+                elif not st.alive and st.error and cid not in told:
+                    told.add(cid)
+                    await ws.send_json({"id": cid, "error": st.error})
+            if time.time() - checked > 30:            # déconnecté ou compte désactivé entre-temps : on coupe
+                checked = time.time()
+                if not accounts.session_user(token):
+                    break
+            await asyncio.sleep(0.01)
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        for st in streams.values():
+            live.release(st)
+        try:
+            await ws.close()
+        except RuntimeError:
+            pass
 
 
 @router.get("/cameras/{cid}/image")

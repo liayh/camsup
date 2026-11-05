@@ -383,3 +383,24 @@ def test_mur_image_par_image(env, monkeypatch):
     assert r.headers["content-type"] == "image/jpeg" and r.content.startswith(b"\xff\xd8")
     assert c.get(f"/api/cameras/{env['cam_b']}/image").status_code == 404
     live.stop_all()
+
+
+def test_direct_par_websocket(env, monkeypatch):
+    """Mur en direct par une seule connexion : images de ses caméras seulement ; sans compte ou d'un autre site : refusé."""
+    from starlette.websockets import WebSocketDisconnect
+    from app import live
+    monkeypatch.setattr(live, "rtsp_url", lambda cam, pw: "testsrc=size=320x240:rate=10")
+    live.stop_all()
+    with pytest.raises(WebSocketDisconnect):
+        with client().websocket_connect("/api/live/ws?ids=1") as ws:
+            ws.receive_bytes()
+    c = client("pharma", "motdepasse-pharma")
+    with pytest.raises(WebSocketDisconnect):
+        with c.websocket_connect("/api/live/ws", headers={"origin": "https://pirate.example"}) as ws:
+            ws.receive_bytes()
+    with c.websocket_connect(f"/api/live/ws?ids={env['cam_a']},{env['cam_b']}") as ws:
+        got = ws.receive_bytes()
+        assert int.from_bytes(got[:4], "big") == env["cam_a"] and got[4:6] == b"\xff\xd8"
+        for _ in range(5):                                   # jamais la caméra de l'autre pharmacie
+            assert int.from_bytes(ws.receive_bytes()[:4], "big") == env["cam_a"]
+    live.stop_all()

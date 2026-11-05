@@ -106,8 +106,10 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 - **Direct (demandé le 05/11/2026, revient sur le refus précédent)** : `app/live.py` : flux secondaire du NVR en RTSP
   (`rtsp://hôte:554/cam/realmonitor?channel=N&subtype=1`, mot de passe jamais journalisé) → ffmpeg → images JPEG
   (10 i/s, 640 px ; faible retard depuis le 05/11/2026 après 3 s constatées : `-fflags nobuffer -flags low_delay`, analyse courte, décodage sur 1 fil, lecture `read1` sans attendre 64 Ko), un ffmpeg par caméra partagé, arrêté 20 s après le dernier spectateur (`live.reap` dans la
-  surveillance), 16 caméras au plus. Mur : `GET /api/cameras/{id}/image` (dernière image, demandée 3 fois/s par
-  `components/LiveImage` : un flux continu par tuile épuiserait les 6 connexions du navigateur) ; agrandi :
+  surveillance), 16 caméras au plus. Mur : WebSocket `/api/live/ws?ids=…` (05/11/2026 : une connexion pour tout le mur, chaque image poussée dès
+  son arrivée, message = n° de caméra sur 4 octets + JPEG ; cookie de session, même origine, sites de l'utilisateur ;
+  `components/liveHub.ts`) ; repli `GET /api/cameras/{id}/image` si le WebSocket échoue (un flux continu par tuile
+  épuiserait les 6 connexions du navigateur) ; agrandi :
   `GET /api/cameras/{id}/live` (MJPEG). CSP : `img-src blob:`. **Non vérifié sur le vrai NVR** (port 554 supposé).
 - Fenêtre « logiciel » (05/11/2026) : `run.app_window` ouvre l'interface en mode application d'Edge (Windows) ou de
   Chrome/Chromium (Linux) — fenêtre seule, sans barre d'adresse, profil à part — sinon navigateur par défaut ; en dev,
