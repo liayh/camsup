@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { post, put } from "../api/client";
 import type { EmailSecurity, EmailSettings } from "../api/types";
 import { isIntegrator, useAuth } from "../auth/AuthContext";
+import { NvrConfig } from "../components/NvrConfig";
+import { useCurrent } from "../components/SiteContext";
 import { useAction, useToast } from "../components/Toast";
 import { Badge, ErrorState, Loading, Notice, PageHeader } from "../components/ui";
 import { fmtDateTime } from "../format";
@@ -115,13 +117,32 @@ function Email() {
   );
 }
 
+/** Configuration du NVR de la pharmacie choisie (sauvegarde pour le réinstaller à l'identique), déplacée du tableau
+ *  de bord le 05/11/2026. */
+function NvrSettings() {
+  const { name, cams } = useCurrent();
+  const hosts = [...new Set(cams.filter((c) => c.brand === "dahua").map((c) => c.host))];
+  return (
+    <section className="card"><h2>Configuration du NVR</h2>
+      {!hosts.length ? <p className="muted">Aucun enregistreur Dahua pour {name || "cette pharmacie"}.</p>
+        : hosts.map((h) => (
+          <div key={h} className="settings-nvr">
+            <div className="mono small muted">NVR {h} · {name}</div>
+            <NvrConfig host={h} site={name} />
+          </div>
+        ))}
+    </section>
+  );
+}
+
 export default function Settings() {
   const { me } = useAuth();
+  const { name } = useCurrent();
   return (
     <>
-      <PageHeader title="Paramètres" />
+      <PageHeader title="Paramètres" sub={name ? `Site · ${name}` : undefined} />
       <Account />
-      {isIntegrator(me) && <><Users /><Email /></>}
+      {isIntegrator(me) && <><Users /><Email /><NvrSettings /></>}
     </>
   );
 }

@@ -4,7 +4,7 @@ import { LiveImage } from "../components/LiveImage";
 import type { Alert, Camera, NvrWatch, RecorderHealth } from "../api/types";
 import { isIntegrator } from "../auth/AuthContext";
 import { badSectors, diskVerdict, fmtAge } from "../components/DiskHealth";
-import { DiskDiagnostic, NvrConfig } from "../components/NvrConfig";
+import { DiskDiagnostic } from "../components/NvrConfig";
 import { siteState, useCurrent } from "../components/SiteContext";
 import { Empty, ErrorState, Loading, Modal, Notice, PageHeader } from "../components/ui";
 import { useCamAdmin } from "./Cameras";
@@ -177,12 +177,6 @@ export default function Dashboard() {
                 un moment ou l’extraire en qualité d’origine : onglet <Link to="/video">Back-up</Link>.</p>
             </Modal>
           )}
-          {admin && hosts.map((h) => (
-            <section key={h} className="dash-card">
-              <div className="dash-head"><h2>Configuration NVR{hosts.length > 1 ? ` ${h}` : ""}</h2></div>
-              <NvrConfig host={h} site={name} />
-            </section>
-          ))}
         </aside>
       </div>
     </div>

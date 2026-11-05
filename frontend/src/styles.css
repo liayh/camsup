@@ -233,3 +233,28 @@ legend { color: var(--mut); font-size: 12px; }
 .dash-state-link:hover { filter: brightness(1.25); color: inherit; }
 .dash-state-link:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
 .dash-state-more { font-size: 13px; color: var(--t); text-decoration: underline; }
+
+/* ---------- design homogène (05/11/2026) : toutes les pages comme le tableau de bord ---------- */
+.content > * { max-width: 1280px; }
+.page-header { margin-bottom: 20px; }
+.page-header h1 { font-size: 30px; line-height: 1.1; font-weight: 800; letter-spacing: .01em; }
+.page-header .subtitle { font-family: var(--monof); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--mut); margin-top: 6px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: none; }
+.card > h2, .card > .row > h2, .modal-head h2 { font-size: 16px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; margin: 0 0 14px; }
+.card > .row > h2 { margin: 0; }
+th { font-family: var(--monof); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); }
+.notice { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--info); border-radius: 8px; padding: 12px 16px; color: var(--txt); }
+.notice.n-warn { border-left-color: var(--warn); } .notice.n-bad { border-left-color: var(--bad); }
+.btn { min-height: 36px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn.small { min-height: 30px; padding: 0 10px; }
+.btn.primary { font-weight: 600; color: #0E1116; }
+.btn.danger { color: var(--bad); border-color: var(--bad); }
+input, select, textarea { min-height: 38px; }
+.login-card { width: min(400px, 100%); padding: 28px; }
+.login-card h1 { font-family: var(--monof); font-size: 22px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.settings-nvr { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+.settings-nvr:first-of-type { border-top: 0; padding-top: 0; }
+.sites-head h2 { font-family: var(--monof); }
+input[type="checkbox"], input[type="radio"] { min-height: 0; }
+.badge, td .badge { white-space: nowrap; }
+td:last-child, td.nowrap { white-space: nowrap; }
