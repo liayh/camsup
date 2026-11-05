@@ -65,6 +65,7 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 - `storage.py` : disques des NVR (Dahua RPC2 + SMART, Hikvision ISAPI). `_trend` : compteurs 5/197/198 comparés au premier
   relevé du disque (`smart_baseline`, par n° de série) ; en hausse = `bad`. Alerte `hdd:<hôte>` seulement au niveau `bad`.
   Équipements regroupés par `cameras.device_key()` (le jeton Fernet diffère par caméra : ne pas grouper par `password_enc`).
+- Alertes rétablies effacées 7 jours après leur fin (`ALERT_RETENTION_DAYS`, purge horaire de `monitor`, 05/11/2026) ; en cours : jamais.
 - `alerting.py` : `raise_alert(key, …)` / `clear_alert(key)` dédupliquées par clé ; e-mail seulement pour
   `config.EMAIL_KINDS` (`nvr`, `rec`, `hdd`), webhook pour tout ; envois en arrière-plan.
 - `mail.py` : réglages e-mail saisis dans Paramètres (`settings.email`, JSON, mot de passe chiffré ; sinon `SMTP_*` du

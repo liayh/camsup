@@ -404,3 +404,15 @@ def test_direct_par_websocket(env, monkeypatch):
         for _ in range(5):                                   # jamais la caméra de l'autre pharmacie
             assert int.from_bytes(ws.receive_bytes()[:4], "big") == env["cam_a"]
     live.stop_all()
+
+
+def test_alertes_retablies_effacees_apres_une_semaine(env):
+    from app import config, monitor
+    now = db.now()
+    db.x("DELETE FROM alerts")
+    for key, closed in (("vieille", now - 8 * 86400), ("recente", now - 2 * 86400), ("en_cours", None)):
+        db.x("INSERT INTO alerts(key,camera_id,kind,message,opened_ts,closed_ts) VALUES(?,?,'camera','x',?,?)",
+             (key, env["cam_a"], now - 30 * 86400, closed))
+    assert config.ALERT_RETENTION_DAYS == 7
+    monitor.purge()
+    assert {r["key"] for r in db.q("SELECT key FROM alerts")} == {"recente", "en_cours"}

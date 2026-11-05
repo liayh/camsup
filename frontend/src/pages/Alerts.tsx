@@ -36,7 +36,7 @@ export default function Alerts() {
         )}
       </section>
       <p className="muted small">Fenêtre d’alerte sur le poste pour tout problème ; e-mail à l’installateur pour l’enregistreur
-        injoignable, une caméra plus enregistrée et un disque à remplacer. Les 500 dernières alertes sont listées.</p>
+        injoignable, une caméra plus enregistrée et un disque à remplacer. Les alertes rétablies sont effacées une semaine après leur fin ; celles en cours restent jusqu’à leur résolution.</p>
     </>
   );
 }

@@ -51,7 +51,8 @@ def _update_cameras(cams: list[dict]) -> None:
 
 def purge() -> None:
     now = db.now()
-    db.x("DELETE FROM alerts WHERE closed_ts IS NOT NULL AND closed_ts < ?", (now - 365 * 86400,))
+    # alertes rétablies depuis plus de ALERT_RETENTION_DAYS jours (vérifié toutes les heures) ; jamais une alerte en cours
+    db.x("DELETE FROM alerts WHERE closed_ts IS NOT NULL AND closed_ts < ?", (now - config.ALERT_RETENTION_DAYS * 86400,))
     db.x("DELETE FROM audit WHERE ts < ?", (now - config.AUDIT_RETENTION_DAYS * 86400,))
     db.x("DELETE FROM sessions WHERE expires_ts < ?", (now,))
     export.purge()

@@ -17,7 +17,7 @@ from pathlib import Path
 SAFE_KEYS = {"CHECK_INTERVAL", "OFFLINE_ALERT_SECONDS", "HDD_CHECK_SECONDS", "CAMERA_CHECK_SECONDS",
              "CAMERA_STALL_SECONDS", "NVR_FAILS", "NVR_BOOT_GRACE_SECONDS", "RECORD_STALE_MINUTES", "POPUPS",
              "POPUP_REMIND_HOURS", "EXPORT_MAX_MINUTES", "EXPORT_RETENTION_DAYS", "ADMIN_USER", "PORT",
-             "SESSION_HOURS", "AUDIT_RETENTION_DAYS", "WEBHOOK_URL", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_FROM",
+             "SESSION_HOURS", "AUDIT_RETENTION_DAYS", "ALERT_RETENTION_DAYS", "WEBHOOK_URL", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_FROM",
              "ALERT_EMAIL_TO", "ALLOWED_HOSTS"}
 
 
@@ -122,6 +122,8 @@ SESSION_HOURS = int(os.getenv("SESSION_HOURS", "12"))
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost,::1" if FROZEN else "*").split(",")
                  if h.strip()]
 AUDIT_RETENTION_DAYS = int(os.getenv("AUDIT_RETENTION_DAYS", "365"))
+# alertes rétablies effacées une semaine après leur fin (demandé le 05/11/2026) ; les alertes en cours restent toujours
+ALERT_RETENTION_DAYS = int(os.getenv("ALERT_RETENTION_DAYS", "7"))
 
 # Notifications
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")  # Slack/Teams/Discord/ntfy... reçoit un JSON {text, content, message}
