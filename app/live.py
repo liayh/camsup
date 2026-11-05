@@ -19,7 +19,7 @@ from . import config, security
 
 log = logging.getLogger("live")
 RTSP_PORT = 554
-FPS = 5                         # images par seconde envoyées : suffisant pour voir, léger pour le PC et le NVR
+FPS = 10                        # images par seconde envoyées (mouvements fluides ; flux secondaire : léger)
 WIDTH = 640                     # largeur des images (le flux secondaire fait souvent 704 ou 640 px)
 IDLE_SECONDS = 20
 MAX_STREAMS = 16
@@ -35,7 +35,10 @@ def rtsp_url(cam: dict, pw: str) -> str:
 def source_args(url: str) -> list[str]:
     """Entrée de ffmpeg : flux RTSP du NVR (TCP, délai de 10 s) ; sinon une mire générée (essais sans NVR)."""
     if url.startswith("rtsp://"):
-        return ["-rtsp_transport", "tcp", "-timeout", "10000000", "-i", url]
+        # faible retard (05/11/2026 : 3 s constatées) : pas de mémoire tampon à l'entrée, analyse du flux courte,
+        # décodage sur un seul fil (le décodage réparti sur plusieurs cœurs retarde d'autant d'images)
+        return ["-rtsp_transport", "tcp", "-timeout", "10000000", "-fflags", "nobuffer", "-flags", "low_delay",
+                "-probesize", "65536", "-analyzeduration", "500000", "-threads", "1", "-i", url]
     return ["-re", "-f", "lavfi", "-i", url]
 
 
@@ -67,7 +70,7 @@ class Stream:
         self.last_seen = time.time()
         self.lock = threading.Lock()
         cmd = [config.FFMPEG, "-nostdin", "-loglevel", "error", *source_args(rtsp_url(cam, pw)), "-an",
-               "-vf", f"fps={FPS},scale={WIDTH}:-2", "-q:v", "7", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"]
+               "-vf", f"fps={FPS},scale={WIDTH}:-2", "-q:v", "7", "-flush_packets", "1", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"]
         try:
             self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
         except FileNotFoundError:
@@ -79,7 +82,7 @@ class Stream:
     def _read(self) -> None:
         buf = bytearray()
         while True:
-            chunk = self.proc.stdout.read(65536)
+            chunk = self.proc.stdout.read1(65536)   # ce qui est arrivé, sans attendre 64 Ko (≈ 2 images de retard)
             if not chunk:
                 break
             buf += chunk

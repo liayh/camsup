@@ -6,7 +6,7 @@ import { SITE_LABEL, SiteProvider, siteState, useSite } from "./SiteContext";
 
 export const SECTIONS = [
   { path: "/", label: "Tableau de bord" },
-  { path: "/video", label: "Vidéo" },
+  { path: "/video", label: "Back-up" },
   { path: "/alertes", label: "Alertes" },
 ] as const;
 

@@ -172,7 +172,7 @@ export default function Dashboard() {
             <Modal wide title={`${zoom.name} · en direct`} onClose={() => setZoom(null)}>
               <img className="live-zoom" src={`/api/cameras/${zoom.id}/live`} alt={`${zoom.name} en direct`} />
               <p className="muted small">Flux secondaire du NVR (petite résolution, quelques images par seconde). Pour revoir
-                un moment ou l’extraire en qualité d’origine : onglet <Link to="/video">Vidéo</Link>.</p>
+                un moment ou l’extraire en qualité d’origine : onglet <Link to="/video">Back-up</Link>.</p>
             </Modal>
           )}
           {admin && hosts.map((h) => (

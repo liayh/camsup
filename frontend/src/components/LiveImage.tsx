@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 /** Image en direct d'une caméra pour le mur : dernière image demandée plusieurs fois par seconde (requêtes courtes ;
  *  un flux continu par caméra épuiserait les 6 connexions qu'un navigateur ouvre à la fois). En pause quand la page
  *  est cachée. `onState` : « ok » quand des images arrivent, « erreur » (message) sinon. */
-export function LiveImage({ camId, fps = 3, onState }: { camId: number; fps?: number; onState?: (s: "attente" | "ok" | "erreur", msg?: string) => void }) {
+export function LiveImage({ camId, fps = 6, onState }: { camId: number; fps?: number; onState?: (s: "attente" | "ok" | "erreur", msg?: string) => void }) {
   const [src, setSrc] = useState<string | null>(null);
   const last = useRef<string | null>(null);
   useEffect(() => {

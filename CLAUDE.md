@@ -39,6 +39,7 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   1 à 15 min (`EXPORT_MAX_MINUTES`), un extrait à la fois (file de 1), table `exports`, fichiers `data/exports/<id>.zip`, purge après
   `EXPORT_RETENTION_DAYS`, `recover()` au démarrage. Mesuré : 10 min d'une caméra 5 Mpx H.265 = 231 Mo en 22 s.
   ffmpeg à fournir sous Windows (`FFMPEG`) : non vérifié.
+- Onglet « Vidéo » renommé **« Back-up »** (05/11/2026, page « Back-up vidéo », route `/video` inchangée).
 - « Vue sur plusieurs jours » (page Vidéo, demandée le 02/11/2026 : vidéo à chercher sans jour ni heure) :
   `POST /recordings/days` (1–4 caméras, 1–31 jours, depuis minuit il y a N−1 jours, `preview.recorded`) → une barre
   par jour (0–24 h) avec les périodes enregistrées ; un clic lance la lecture d'1 h à partir de l'instant cliqué.
@@ -104,7 +105,7 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 - Tableau de bord = maquette « Option B — Mur de caméras » (04/11/2026, `pages/Dashboard.tsx`) : bandeau d'état du site (HORS LIGNE / ALERTE / EN LIGNE + 4 compteurs), « Mur de caméras » = tuiles d'**état** par caméra (`camTile` : en ligne, déconnectée, n'enregistre plus, inconnu si NVR injoignable) + tuile NVR, **sans vidéo en direct** ; colonne : alertes, disques (verdicts + diagnostic), configuration NVR. Depuis le 05/11/2026, l'onglet « NVR et disques » est supprimé (`/cameras`, `/enregistreurs` → `/`) : sa gestion est sur le tableau de bord pour l'intégrateur (`pages/Cameras.tsx` → `useCamAdmin()` : barre « Ajouter un enregistreur / une caméra / Renommer la pharmacie », Tester / Modifier / Supprimer sur chaque tuile, « Nouvelles caméras » / « Identifiants » et détail technique sur la tuile NVR). Thème de toute l'interface : couleurs de la maquette, polices Chivo et JetBrains Mono intégrées (`@fontsource`, pas de Google Fonts : CSP + poste hors ligne).
 - **Direct (demandé le 05/11/2026, revient sur le refus précédent)** : `app/live.py` : flux secondaire du NVR en RTSP
   (`rtsp://hôte:554/cam/realmonitor?channel=N&subtype=1`, mot de passe jamais journalisé) → ffmpeg → images JPEG
-  (5 i/s, 640 px), un ffmpeg par caméra partagé, arrêté 20 s après le dernier spectateur (`live.reap` dans la
+  (10 i/s, 640 px ; faible retard depuis le 05/11/2026 après 3 s constatées : `-fflags nobuffer -flags low_delay`, analyse courte, décodage sur 1 fil, lecture `read1` sans attendre 64 Ko), un ffmpeg par caméra partagé, arrêté 20 s après le dernier spectateur (`live.reap` dans la
   surveillance), 16 caméras au plus. Mur : `GET /api/cameras/{id}/image` (dernière image, demandée 3 fois/s par
   `components/LiveImage` : un flux continu par tuile épuiserait les 6 connexions du navigateur) ; agrandi :
   `GET /api/cameras/{id}/live` (MJPEG). CSP : `img-src blob:`. **Non vérifié sur le vrai NVR** (port 554 supposé).
