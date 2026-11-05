@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { ROLE_LABEL } from "../format";
 import { SITE_LABEL, SiteProvider, siteState, useSite } from "./SiteContext";
@@ -42,6 +42,22 @@ function Sites({ filter }: { filter: string }) {
   );
 }
 
+/** Bandeau de licence : bientôt expirée (orange) ou expirée / non activée (rouge, surveillance et vidéo arrêtées). */
+function LicenceBanner() {
+  const { ov } = useSite();
+  const l = ov?.licence;
+  if (!l || l.etat === "active" || l.etat === "sans") return null;
+  const fin = l.fin ? new Date(l.fin).toLocaleDateString("fr-FR") : "";
+  return (
+    <div className={`licence-banner ${l.actif ? "warn" : "bad"}`} role="alert">
+      {l.actif
+        ? <>Licence CamSup : se termine le <b>{fin}</b> (dans {l.jours} jour{(l.jours ?? 0) > 1 ? "s" : ""}). Demandez le nouveau code à votre installateur.</>
+        : <><b>Licence CamSup {l.etat === "absente" ? "non activée" : `expirée depuis le ${fin}`}</b> : surveillance, direct et vidéo arrêtés.</>}
+      {" "}<Link to="/parametres">Entrer le code</Link>
+    </div>
+  );
+}
+
 function Frame() {
   const { me, logout } = useAuth();
   const [filter, setFilter] = useState("");
@@ -61,6 +77,7 @@ function Frame() {
         <span className="small muted">{me?.username} · {ROLE_LABEL[me?.role ?? ""]}</span>
         <button className="btn small" onClick={logout}>Déconnexion</button>
       </header>
+      <LicenceBanner />
       <div className="body">
         <Sites filter={filter} />
         <main className="content"><Outlet /></main>

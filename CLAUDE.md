@@ -136,6 +136,17 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   `config.FROZEN` : 127.0.0.1, HTTP, ffmpeg à côté de l'exe, journaux dans `data/logs`. Installateur vérifié
   sous Wine (installation silencieuse, premier démarrage) ; pas encore sur un vrai Windows.
 
+- **Licence** (05/11/2026, `app/licence.py`, demandée par l'utilisateur) : code `CS1-…` saisi à l'installation (page
+  Inno « Licence CamSup », `/LICENCE=` en silencieux, → `installation.env` `LICENCE`, importé puis effacé) ou dans
+  Paramètres › Licence (tout compte connecté). Code = n° + date de fin (incluse) signés Ed25519 ; clé privée
+  `licence-privee.key` (hors git, **chez le vendeur seulement**), codes fabriqués par `python3 outils/creer_licence.py
+  [--fin AAAA-MM-JJ] [--numero N]` (défaut 1 an). Sans licence valide (choix de l'utilisateur : tout s'arrête) :
+  plus de relevés NVR/disques/caméras (`monitor`), direct coupé, lecture et extraits refusés (403, `_licence()`),
+  alerte `licence` (fenêtre + e-mail à camsupalerte) ; comptes, Paramètres et saisie du code restent possibles.
+  Bandeau orange 30 j avant, rouge après. Heure reculée sans effet (`settings.licence_vu`). Code valable sur
+  plusieurs PC (pas d'identifiant de poste). Exigée seulement en programme Windows (`LICENCE_REQUIRED` = FROZEN ou
+  `LICENCE_REQUISE=1`). Page Inno non compilée ici (pas d'Inno) : vérifiée par la fabrication GitHub.
+
 ## Règles à respecter
 - Ne jamais renvoyer ni journaliser un mot de passe : `cameras.public()` pour l'API, `security.scrub()` pour tout message d'erreur.
 - Un seul worker uvicorn.
@@ -150,11 +161,7 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 E-mail à configurer dans Paramètres (compte d'envoi + destinataire) ; essayer l'installateur sur un vrai poste
 Windows ; essai réel d'une caméra débranchée ; Hikvision (caméras et enregistrement) ;
 compte NVR en lecture seule au lieu de l'admin ; NTP du NVR désactivé (horloge en retard).
-**En attente (décision de l'utilisateur, 31/10/2026) : licence par pharmacie, 50 €/an.** Piste proposée : fichier
-`licence.camsup` signé Ed25519 (clé privée chez le vendeur seulement, clé publique dans CamSup) : pharmacie, n°,
-date de fin, éventuellement identifiant du PC (choix pas encore fait) ; import dans Paramètres ; à l'expiration
-ne jamais couper alertes ni extraits (bandeau 30 j avant, grâce 30 j, puis configuration bloquée) ; outil
-`creer-licence` côté vendeur. Ne rien coder avant le feu vert.
+**Licence par pharmacie (codée le 05/11/2026, décision de l'utilisateur)** : voir `app/licence.py` plus haut.
 Windows 1.1 (serveur sous SYSTEM, données réservées) : **rien n'est vérifié sur un vrai Windows** (droits icacls,
 tâche planifiée, mise à jour depuis la 1.0, fenêtre d'alerte par session) ; sous Wine, le Planificateur de tâches et
 PowerShell manquent (l'installateur affichera l'échec de `installer-tache.ps1`).

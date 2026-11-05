@@ -4,7 +4,7 @@
 ; (%PROGRAMDATA%\CamSup\data) réservées au système et aux administrateurs. Fenêtre d'alerte : lancée à l'ouverture de
 ; session de chaque utilisateur (CamSup.exe --popup), elle interroge le serveur local.
 ; Premier lancement : l'utilisateur crée son propre compte dans l'interface (aucun mot de passe demandé ici).
-; Déploiement sans écran : CamSup-Installation-x.y.z.exe /VERYSILENT [/MOTDEPASSE=MotDePasseAdmin → compte « admin »]
+; Déploiement sans écran : CamSup-Installation-x.y.z.exe /VERYSILENT [/LICENCE=CS1-…] [/MOTDEPASSE=MotDePasseAdmin → compte « admin »]
 
 #define AppVersion "1.1.0"
 
@@ -77,8 +77,9 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM CamSup.exe"; Flags: runhi
 
 [Code]
 var
-  AdminPassword: String;
+  AdminPassword, LicenceCode: String;
   Known, TaskFailed: Boolean;
+  LicencePage: TInputQueryWizardPage;
 
 function InstallFile: String;
 begin
@@ -104,7 +105,37 @@ begin
   { pas de mot de passe demandé : l'utilisateur crée son propre compte à la première ouverture de CamSup.
     Déploiement sans écran : /MOTDEPASSE=… crée le compte « admin » à la place. }
   AdminPassword := ExpandConstant('{param:MOTDEPASSE|}');
+  LicenceCode := Trim(ExpandConstant('{param:LICENCE|}'));
   Result := True;
+end;
+
+procedure InitializeWizard;
+begin
+  { code de licence (1 an en général), vérifié par CamSup au démarrage ; mise à jour : vide = licence en place gardée }
+  LicencePage := CreateInputQueryPage(wpSelectTasks, 'Licence CamSup',
+    'Entrez le code de licence de cette pharmacie.',
+    'Le code commence par CS1- (copiez-le en entier). Sans licence valide, CamSup ne surveille pas le NVR et la ' +
+    'vidéo est bloquée. Il pourra aussi être saisi plus tard dans Paramètres › Licence.');
+  LicencePage.Add('Code de licence :', False);
+  LicencePage.Values[0] := LicenceCode;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Code: String;
+begin
+  Result := True;
+  if CurPageID <> LicencePage.ID then
+    exit;
+  Code := Uppercase(Trim(LicencePage.Values[0]));
+  if (Code = '') and Known then
+    exit;
+  if (Pos('CS1', Code) <> 1) or (Length(Code) < 100) then begin
+    MsgBox('Code de licence incomplet ou mal recopié : il commence par CS1- et fait environ 130 caractères.', mbError, MB_OK);
+    Result := False;
+    exit;
+  end;
+  LicenceCode := Code;
 end;
 
 function PasswordProblem(const Pw: String): String;
@@ -147,11 +178,17 @@ begin
   if CurStep <> ssPostInstall then
     exit;
   { lu par CamSup au premier démarrage puis effacé (config.forget_admin_password) ; data\ est déjà protégé }
+  SetArrayLength(Lines, 0);
   if (AdminPassword <> '') and not FileExists(ExpandConstant('{commonappdata}\CamSup\data\camsup.db')) then begin
-    SetArrayLength(Lines, 1);
-    Lines[0] := 'ADMIN_PASSWORD=' + AdminPassword;
-    SaveStringsToUTF8File(InstallFile, Lines, False);
+    SetArrayLength(Lines, GetArrayLength(Lines) + 1);
+    Lines[GetArrayLength(Lines) - 1] := 'ADMIN_PASSWORD=' + AdminPassword;
   end;
+  if LicenceCode <> '' then begin
+    SetArrayLength(Lines, GetArrayLength(Lines) + 1);
+    Lines[GetArrayLength(Lines) - 1] := 'LICENCE=' + LicenceCode;
+  end;
+  if GetArrayLength(Lines) > 0 then
+    SaveStringsToUTF8File(InstallFile, Lines, False);
   if not Exec(PowerShell, '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\installer-tache.ps1') + '"',
               '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then begin
     TaskFailed := True;

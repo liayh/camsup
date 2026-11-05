@@ -27,7 +27,7 @@ export interface Alert { id: number; key: string; camera_id: number | null; site
 
 export interface Overview {
   me: Me; sites: Site[]; cameras: Camera[]; alerts: Alert[];
-  recorders: RecorderHealth[]; nvr: NvrWatch[]; email: boolean; export_max_minutes: number; config_saved: Record<string, number>; now: number;
+  recorders: RecorderHealth[]; nvr: NvrWatch[]; email: boolean; export_max_minutes: number; licence?: Licence; config_saved: Record<string, number>; now: number;
 }
 
 export interface CameraTest { ok: boolean; error?: string; nvr_time?: string; state?: string; last_record?: string | null; disks?: number }
@@ -52,3 +52,8 @@ export interface EmailSettings {
 
 export interface NvrChannelFound { channel: number; state: string; title: string; name: string; known: boolean }
 export interface NvrFound { model: string; serial: string; channels: NvrChannelFound[] }
+
+/** Licence par pharmacie (`app/licence.py`) : « sans » = pas exigée (essais en développement). */
+export interface Licence {
+  etat: "active" | "bientot" | "expiree" | "absente" | "sans"; actif: boolean; fin?: string; jours?: number; numero?: number;
+}

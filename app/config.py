@@ -80,6 +80,9 @@ def forget_admin_password() -> None:
             ENV_FILE.write_text("\n".join(kept) + "\n", encoding="utf-8")
 
 
+# Licence (`licence.py`) : exigée par le programme Windows ; code saisi à l'installation (`LICENCE`, installation.env)
+LICENCE_REQUIRED = FROZEN or os.getenv("LICENCE_REQUISE") == "1"
+
 DATA_DIR = (HOME / "data") if FROZEN else Path(os.getenv("DATA_DIR", "./data")).resolve()
 LOG_DIR = DATA_DIR / "logs"
 DB_PATH = DATA_DIR / "camsup.db"
@@ -88,7 +91,7 @@ POPUP_PUBKEY = (HOME / "fenetre.pub") if FROZEN else (DATA_DIR / "fenetre.pub")
 # programme Windows : mot de passe admin saisi à l'installation, dans data/ (réservé au système et aux administrateurs)
 INSTALL_FILE = DATA_DIR / "installation.env"
 if FROZEN:
-    _load_env_file(INSTALL_FILE, {"ADMIN_PASSWORD"})
+    _load_env_file(INSTALL_FILE, {"ADMIN_PASSWORD", "LICENCE"})
 
 # Surveillance
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "5"))                   # tour de la boucle de surveillance
@@ -103,10 +106,10 @@ RECORD_STALE_MINUTES = int(os.getenv("RECORD_STALE_MINUTES", "15"))      # sans 
 # Fenêtres d'alerte sur le poste (pharmacie) et e-mail (installateur)
 POPUPS = os.getenv("POPUPS", "1") not in ("0", "false", "non")
 POPUP_REMIND_HOURS = float(os.getenv("POPUP_REMIND_HOURS", "4"))         # fenêtre fermée → rouverte après ce délai
-POPUP_KINDS = ("nvr", "camera", "rec", "hdd", "offline")  # types d'alerte affichés au pharmacien
+POPUP_KINDS = ("nvr", "camera", "rec", "hdd", "offline", "licence")  # types d'alerte affichés au pharmacien
 # types d'alerte envoyés par e-mail (05/11/2026) : perte du NVR, caméra(s) déconnectée(s), enregistrement arrêté,
 # santé du disque dur
-EMAIL_KINDS = ("nvr", "camera", "rec", "hdd")
+EMAIL_KINDS = ("nvr", "camera", "rec", "hdd", "licence")
 
 # Extrait vidéo pour les forces de l'ordre (NVR Dahua)
 EXPORT_MAX_MINUTES = int(os.getenv("EXPORT_MAX_MINUTES", "15"))          # durée maximale d'un extrait
@@ -119,6 +122,7 @@ FFMPEG = str(_BUNDLED_FFMPEG) if FROZEN else os.getenv("FFMPEG", str(_BUNDLED_FF
 
 # Accès web
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")       # compte installateur créé au premier démarrage (base vide)
+LICENCE_CODE = os.getenv("LICENCE", "")           # code saisi à l'installation (importé puis effacé avec le fichier)
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")  # vide => généré et affiché au démarrage
 HOST = "127.0.0.1" if FROZEN else os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))

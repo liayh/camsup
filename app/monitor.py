@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import alerting, config, db, export, live, nvrwatch, preview, storage
+from . import alerting, config, db, export, licence, live, nvrwatch, preview, storage
 
 log = logging.getLogger("monitor")
 _stop = threading.Event()
@@ -66,6 +66,17 @@ def _loop() -> None:
             cams = db.q("SELECT * FROM cameras WHERE enabled=1")
             now = time.time()
             db.set_setting("heartbeat", str(int(now)))   # surveillé par la fenêtre d'alerte (serveur figé/arrêté)
+            if not licence.active():
+                # licence expirée (ou absente) : plus de relevés (informations figées), direct coupé ; seule l'alerte
+                # « licence » reste (fenêtre d'alerte + e-mail au vendeur)
+                alerting.raise_alert("licence", None, "licence", licence.message())
+                live.stop_all()
+                if now - last_purge > 3600:
+                    purge()
+                    last_purge = now
+                _stop.wait(config.CHECK_INTERVAL)
+                continue
+            alerting.clear_alert("licence")
             if now - last_nvr >= config.CAMERA_CHECK_SECONDS:
                 _pool.submit(nvrwatch.check, cams)     # en arrière-plan : un NVR injoignable met jusqu'à 30 s à répondre
                 last_nvr = now

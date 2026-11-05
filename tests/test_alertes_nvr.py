@@ -89,7 +89,7 @@ def test_nvr_injoignable_apres_deux_echecs(env):
 
 def test_types_envoyes_par_email():
     # 05/11/2026 : perte du NVR, caméra(s) déconnectée(s), enregistrement arrêté, santé du disque → e-mail
-    assert set(config.EMAIL_KINDS) == {"nvr", "camera", "rec", "hdd"}
+    assert set(config.EMAIL_KINDS) == {"nvr", "camera", "rec", "hdd", "licence"}     # + licence expirée (vendeur prévenu)
     assert "camera" in config.POPUP_KINDS
 
 

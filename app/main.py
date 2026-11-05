@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import accounts, alerting, cameras, config, dahuarpc, db, export, fenetre, live, mail, monitor, nvrwatch, preview, security, storage
+from . import accounts, alerting, cameras, config, dahuarpc, db, export, fenetre, licence, live, mail, monitor, nvrwatch, preview, security, storage
 from .accounts import User
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -46,6 +46,12 @@ async def lifespan(_: FastAPI):
         db.x("DELETE FROM sessions")
         accounts.audit(None, "mise_a_jour", detail=f"{db.setting('version') or '1.0'} → {config.VERSION}, sessions fermées")
         db.set_setting("version", config.VERSION)
+    if config.LICENCE_CODE:
+        try:                                   # code saisi à l'installation (installation.env, effacé juste après)
+            licence.install(config.LICENCE_CODE)
+            accounts.audit(None, "licence.installee", detail="code saisi à l'installation")
+        except ValueError as e:
+            log.warning("Code de licence de l'installation refusé : %s", e)
     if config.FROZEN:
         config.forget_admin_password()         # saisi à l'installation : inutile (et à ne pas laisser) une fois le compte créé
     mail.import_preset()
@@ -357,8 +363,31 @@ def overview(user: User = Me):
         "export_max_minutes": config.EXPORT_MAX_MINUTES,
         "config_saved": ({r["key"].split(":", 1)[1]: int(r["value"]) for r in
                           db.q("SELECT key, value FROM settings WHERE key LIKE 'nvr_config:%'")} if user.is_integrator else {}),
+        "licence": licence.status(),
         "now": db.now(),
     }
+
+
+# ------------------------------------------------------------------ licence
+class LicenceIn(BaseModel):
+    code: str = Field(min_length=10, max_length=300)
+
+
+@router.get("/licence")
+def get_licence(user: User = Me):
+    return licence.status()
+
+
+@router.post("/licence")
+def set_licence(body: LicenceIn, request: Request, user: User = Me):
+    """Nouveau code (renouvellement) : tout compte connecté peut le saisir, c'est la signature du code qui fait foi."""
+    try:
+        st = licence.install(body.code)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    accounts.audit_req(request, "licence.installee", obj=str(st.get("numero", "")), detail=f"jusqu'au {st.get('fin', '')}")
+    alerting.clear_alert("licence")
+    return st
 
 
 # ------------------------------------------------------------------ sites
@@ -484,6 +513,12 @@ def _discover(host: str, port: int, username: str, password: str) -> dict:
     return found
 
 
+def _licence() -> None:
+    """Direct et vidéo (lecture, extraits) : refusés sans licence valide."""
+    if not licence.active():
+        raise HTTPException(403, licence.message())
+
+
 _NVR_SLOTS = threading.BoundedSemaphore(4)
 
 
@@ -584,6 +619,7 @@ def add_nvr(body: NvrAdd, request: Request):
 @router.get("/cameras/{cid}/live")
 def camera_live(cid: int, request: Request, user: User = Me):
     """Image en direct de la caméra (MJPEG, pour une balise <img>) : tous les rôles, sur leurs sites seulement."""
+    _licence()
     cam = _cam(user, cid)
     if cam["brand"] != "dahua" or not cam["enabled"]:
         raise HTTPException(400, "Direct disponible seulement pour une caméra active derrière un NVR Dahua")
@@ -607,7 +643,7 @@ async def live_ws(ws: WebSocket, ids: str = ""):
         return
     token = ws.cookies.get(accounts.COOKIE)
     user = accounts.session_user(token)
-    if not user:
+    if not user or not licence.active():
         await ws.close(code=1008)
         return
     await ws.accept()
@@ -638,7 +674,7 @@ async def live_ws(ws: WebSocket, ids: str = ""):
                     await ws.send_json({"id": cid, "error": st.error})
             if time.time() - checked > 30:            # déconnecté ou compte désactivé entre-temps : on coupe
                 checked = time.time()
-                if not accounts.session_user(token):
+                if not accounts.session_user(token) or not licence.active():
                     break
             await asyncio.sleep(0.01)
     except (WebSocketDisconnect, RuntimeError):
@@ -656,6 +692,7 @@ async def live_ws(ws: WebSocket, ids: str = ""):
 def camera_image(cid: int, user: User = Me):
     """Dernière image en direct de la caméra (JPEG) : le mur de caméras en demande plusieurs par seconde (des
     requêtes courtes : un navigateur n'ouvre que 6 connexions à la fois, un flux continu par caméra bloquerait tout)."""
+    _licence()
     cam = _cam(user, cid)
     if cam["brand"] != "dahua" or not cam["enabled"]:
         raise HTTPException(400, "Direct disponible seulement pour une caméra active derrière un NVR Dahua")
@@ -713,6 +750,7 @@ def get_export(eid: int, user: User = Me):
 
 @router.post("/exports")
 def create_export(body: ExportIn, request: Request, user: User = Me):
+    _licence()
     accounts.require_site(user, body.site_id)
     cams = [_cam(user, cid) for cid in dict.fromkeys(body.camera_ids)]
     if any(c["site_id"] != body.site_id for c in cams):
@@ -730,6 +768,7 @@ def create_export(body: ExportIn, request: Request, user: User = Me):
 
 @router.get("/exports/{eid}/fichier")
 def download_export(eid: int, request: Request, user: User = Me):
+    _licence()
     row = _export(user, eid)
     if row["state"] != "pret" or not export.file(eid).is_file():
         raise HTTPException(409, "Extrait pas prêt")
@@ -760,6 +799,7 @@ def _preview(user: User, key: str) -> dict:
 @router.post("/previews")
 def create_preview(body: PreviewIn, request: Request, user: User = Me):
     """Voir les images enregistrées avant d'extraire (fenêtre de quelques minutes, convertie pour le navigateur)."""
+    _licence()
     cam = _cam(user, body.camera_id)
     if cam["brand"] != "dahua":
         raise HTTPException(400, "Images visibles seulement depuis un NVR Dahua")
@@ -801,6 +841,7 @@ class RecordedDaysIn(BaseModel):
 def recordings_days(body: RecordedDaysIn, user: User = Me):
     """Vue sur plusieurs jours (« Vidéo ») : ce que le NVR a enregistré de minuit il y a `days - 1` jours à maintenant,
     heure du PC, pour chercher une vidéo dont on ne connaît ni le jour ni l'heure."""
+    _licence()
     cams = [_cam(user, cid) for cid in dict.fromkeys(body.camera_ids)]
     if any(c["brand"] != "dahua" for c in cams):
         raise HTTPException(400, "Images visibles seulement depuis un NVR Dahua")
@@ -820,6 +861,7 @@ def recordings_days(body: RecordedDaysIn, user: User = Me):
 @router.post("/recordings")
 def recordings(body: RecordedIn, user: User = Me):
     """Périodes enregistrées par le NVR (barre de temps de « Vidéo »), à l'heure du PC."""
+    _licence()
     cams = [_cam(user, cid) for cid in dict.fromkeys(body.camera_ids)]
     if any(c["brand"] != "dahua" for c in cams):
         raise HTTPException(400, "Images visibles seulement depuis un NVR Dahua")
@@ -842,6 +884,7 @@ def get_preview(key: str, user: User = Me):
 
 @router.get("/previews/{key}/video")
 def preview_video(key: str, user: User = Me):
+    _licence()
     job = _preview(user, key)
     if job["state"] != "pret" or not preview.path(key).is_file():
         raise HTTPException(409, "Aperçu pas prêt")

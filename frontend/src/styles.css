@@ -258,3 +258,9 @@ input, select, textarea { min-height: 38px; }
 input[type="checkbox"], input[type="radio"] { min-height: 0; }
 .badge, td .badge { white-space: nowrap; }
 td:last-child, td.nowrap { white-space: nowrap; }
+
+/* Bandeau de licence (05/11/2026) */
+.licence-banner { padding: 10px 20px; font-size: 14px; border-bottom: 1px solid var(--line); }
+.licence-banner.warn { background: #2A2215; color: var(--warn); }
+.licence-banner.bad { background: var(--bad-bg); color: var(--bad-txt); }
+.licence-banner a { color: inherit; text-decoration: underline; font-weight: 700; }

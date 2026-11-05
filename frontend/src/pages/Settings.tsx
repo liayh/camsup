@@ -3,7 +3,7 @@ import { post, put } from "../api/client";
 import type { EmailSecurity, EmailSettings } from "../api/types";
 import { isIntegrator, useAuth } from "../auth/AuthContext";
 import { NvrConfig } from "../components/NvrConfig";
-import { useCurrent } from "../components/SiteContext";
+import { useCurrent, useSite } from "../components/SiteContext";
 import { useAction, useToast } from "../components/Toast";
 import { Badge, ErrorState, Loading, Notice, PageHeader } from "../components/ui";
 import { fmtDateTime } from "../format";
@@ -135,12 +135,47 @@ function NvrSettings() {
   );
 }
 
+const LICENCE_LABEL: Record<string, string> = {
+  active: "Active", bientot: "Bientôt expirée", expiree: "Expirée", absente: "Non activée", sans: "Non exigée (essai)",
+};
+
+/** Licence : état et saisie du nouveau code (tous les comptes : c'est la signature du code qui fait foi). */
+function Licence() {
+  const { ov, reload } = useSite();
+  const run = useAction();
+  const l = ov?.licence;
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const code = String(new FormData(form).get("code")).trim();
+    if (await run(() => post("/licence", { code }), "Licence enregistrée")) { form.reset(); reload(); }
+  }
+  if (!l) return null;
+  const tone = l.etat === "active" || l.etat === "sans" ? "ok" : l.actif ? "warn" : "bad";
+  return (
+    <section className="card"><h2>Licence</h2>
+      <p>
+        <Badge tone={tone}>{LICENCE_LABEL[l.etat]}</Badge>
+        {l.fin && <> jusqu’au <b>{new Date(l.fin).toLocaleDateString("fr-FR")}</b> inclus</>}
+        {l.numero !== undefined && <span className="mono small muted"> · licence n° {l.numero}</span>}
+      </p>
+      {!l.actif && <p className="error-text">Sans licence valide, CamSup ne surveille plus le NVR et la vidéo (direct, lecture, extraits) est bloquée.</p>}
+      <form className="form" onSubmit={submit}>
+        <label>Nouveau code de licence
+          <textarea name="code" required rows={3} spellCheck={false} className="mono" placeholder="CS1-XXXXXX-XXXXXX-…" /></label>
+        <button className="btn primary">Enregistrer le code</button>
+      </form>
+    </section>
+  );
+}
+
 export default function Settings() {
   const { me } = useAuth();
   const { name } = useCurrent();
   return (
     <>
       <PageHeader title="Paramètres" sub={name ? `Site · ${name}` : undefined} />
+      <Licence />
       <Account />
       {isIntegrator(me) && <><Users /><Email /><NvrSettings /></>}
     </>

@@ -13,3 +13,4 @@ packaging/windows/ffmpeg/
 .claude/
 packaging/windows/email.env
 camsup-email.env
+licence-privee.key
