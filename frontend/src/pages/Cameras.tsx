@@ -1,21 +1,10 @@
 import { FormEvent, useState } from "react";
 import { del, post, put } from "../api/client";
-import type { Camera, CameraTest, NvrFound, NvrWatch, Site } from "../api/types";
-import { isIntegrator, useAuth } from "../auth/AuthContext";
-import { DiskHealth } from "../components/DiskHealth";
-import { DiskDiagnostic, NvrConfig } from "../components/NvrConfig";
+import type { Camera, CameraTest, NvrFound, Site } from "../api/types";
 import { useCurrent } from "../components/SiteContext";
 import { useAction, useToast } from "../components/Toast";
-import { Badge, Empty, ErrorState, Loading, Modal, PageHeader } from "../components/ui";
-import { ago, fmtDateTime } from "../format";
+import { Badge, Empty, Modal } from "../components/ui";
 import { useApi } from "../hooks/useApi";
-
-function state(c: Camera): [tone: "ok" | "bad" | "warn" | "muted", label: string] {
-  if (!c.enabled) return ["muted", "Désactivée"];
-  if (c.online == null) return ["warn", "Non vérifiée"];
-  if (!c.online) return ["bad", c.error || "Hors ligne"];
-  return ["ok", "Vue par le NVR"];
-}
 
 function CameraForm({ cam, sites, onDone }: { cam: Camera | null; sites: Site[]; onDone: () => void }) {
   const run = useAction();
@@ -153,19 +142,10 @@ function NvrWizard({ sites, current, existing, onDone }: { sites: Site[]; curren
 
 const CONN: Record<string, string> = { Connected: "connectée", NoVideo: "plus d’images", Unconnect: "déconnectée", Empty: "canal vide" };
 
-/** État d'une caméra : ce qu'en dit son NVR (Dahua) s'il est relevé, sinon le test de joignabilité. */
-function camState(c: Camera, w: NvrWatch | undefined): [tone: "ok" | "bad" | "warn" | "muted", label: string] {
-  const seen = w?.cameras.find((x) => x.id === c.id);
-  if (c.enabled && seen) return [seen.state === "Connected" ? "ok" : "bad", CONN[seen.state] ?? seen.state];
-  return state(c);
-}
-
-/** « NVR et disques » de la pharmacie choisie : chaque enregistreur avec ses disques, puis ses caméras (canaux). */
-export default function Cameras() {
-  const { me } = useAuth();
-  const admin = isIntegrator(me);
+/** Gestion des enregistreurs et des caméras (intégrateur), affichée sur le tableau de bord : boutons de la barre,
+ *  boutons de chaque tuile de caméra et du NVR, et les fenêtres (assistant d'ajout, identifiants, modification). */
+export function useCamAdmin() {
   const cur = useCurrent();
-  const ov = { data: cur.ov, loading: cur.loading, error: cur.error, reload: cur.reload };
   const sites = useApi<Site[]>("/sites");
   const run = useAction();
   const toast = useToast();
@@ -173,93 +153,56 @@ export default function Cameras() {
   const [wizard, setWizard] = useState<Rescan | true | null>(null);
   const [creds, setCreds] = useState<Camera | null>(null);
   const [rename, setRename] = useState<Site | null>(null);
-
-  if (ov.loading && !ov.data) return <Loading />;
-  if (ov.error && !ov.data) return <ErrorState message={ov.error} onRetry={ov.reload} />;
-  const cams = cur.cams;
+  const reload = cur.reload;
   const here = sites.data?.find((s) => s.id === cur.site);
-  const groups = new Map<string, Camera[]>();
-  for (const c of cams) groups.set(`${c.brand}|${c.host}`, [...(groups.get(`${c.brand}|${c.host}`) ?? []), c]);
 
   const test = async (c: Camera) => {
     const r = await run(() => post<CameraTest>(`/cameras/${c.id}/test`));
     if (!r) return;
     if (!r.ok) toast(`${c.name} : échec, ${r.error}`, "bad");
-    else if (r.state !== undefined) toast(`${c.name} : NVR joignable, caméra « ${r.state} », dernier enregistrement ${r.last_record ?? "aucun sur 24 h"} (heure du NVR ${r.nvr_time})`, r.state === "Connected" ? "ok" : "bad");
+    else if (r.state !== undefined) toast(`${c.name} : NVR joignable, caméra « ${CONN[r.state] ?? r.state} », dernier enregistrement ${r.last_record ?? "aucun sur 24 h"} (heure du NVR ${r.nvr_time})`, r.state === "Connected" ? "ok" : "bad");
     else toast(`${c.name} : enregistreur joignable, ${r.disks} disque(s)`, "ok");
   };
   const rescan = async (c: Camera) => {
     const r = await run(() => post<Rescan>("/nvr/rescan", { host: c.host }));
     if (r) setWizard(r);
   };
-  // la pharmacie (site) se gère ici : son nom, et la suppression d'une pharmacie qui n'a plus de caméra
   const renameSite = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!rename) return;
     const name = String(new FormData(e.currentTarget).get("name")).trim();
-    if (await run(() => put(`/sites/${rename.id}`, { name, notes: rename.notes }), "Pharmacie renommée")) { setRename(null); sites.reload(); ov.reload(); }
+    if (await run(() => put(`/sites/${rename.id}`, { name, notes: rename.notes }), "Pharmacie renommée")) { setRename(null); sites.reload(); reload(); }
   };
   const removeSite = async (s: Site) => {
-    if (confirm(`Supprimer la pharmacie « ${s.name} » (aucune caméra) ?`) && await run(() => del(`/sites/${s.id}`), "Pharmacie supprimée")) sites.reload();
+    if (confirm(`Supprimer la pharmacie « ${s.name} » (aucune caméra) ?`) && await run(() => del(`/sites/${s.id}`), "Pharmacie supprimée")) { sites.reload(); reload(); }
   };
   const remove = async (c: Camera) => {
-    if (confirm(`Supprimer « ${c.name} » ?`) && await run(() => del(`/cameras/${c.id}`), "Caméra supprimée")) ov.reload();
+    if (confirm(`Supprimer la caméra « ${c.name} » ?`) && await run(() => del(`/cameras/${c.id}`), "Caméra supprimée")) reload();
   };
 
-  return (
+  const toolbar = (
     <>
-      <PageHeader title="NVR et disques" sub={cur.name}>
-        {admin && here && <button className="btn small" onClick={() => setRename(here)}>Renommer la pharmacie</button>}
-        {admin && here && !cams.length && <button className="btn small danger" onClick={() => removeSite(here)}>Supprimer la pharmacie</button>}
-        {admin && <button className="btn primary" onClick={() => setWizard(true)}>Ajouter un enregistreur</button>}
-        {admin && <button className="btn small" onClick={() => setEdit("new")}>Ajouter une caméra à la main</button>}
-        <button className="btn small" onClick={ov.reload}>Actualiser</button>
-      </PageHeader>
-      {!cams.length && <Empty>Aucune caméra. {admin ? "Cliquez sur « Ajouter un enregistreur »." : ""}</Empty>}
-      {[...groups.values()].map((list) => {
-        const { brand, host } = list[0];
-        const health = ov.data?.recorders.find((r) => r.host === host);
-        const w = ov.data?.nvr.find((n) => n.host === host);
-        return (
-          <section key={`${brand}|${host}`} className="card">
-            <div className="row"><h2>{brand === "hikvision" ? "Hikvision" : "Dahua"} · {host}
-              <span className="muted small"> · {list.length} caméra(s){w ? ` · relevé il y a ${ago(w.checked)}` : ""}</span></h2>
-              <span className="grow" />
-              {admin && brand === "dahua" && <>
-                <button className="btn small" onClick={() => rescan(list[0])}>Chercher de nouvelles caméras</button>
-                <button className="btn small" onClick={() => setCreds(list[0])}>Identifiants du NVR</button>
-                <DiskDiagnostic host={host} /></>}
-            </div>
-            {w?.error && <div className="error-text">Enregistreur : {w.error}</div>}
-            {w?.error && w.detail && <div className="muted small">Détail technique (pour l’assistance) : <code>{w.detail}</code></div>}
-            {admin && brand === "dahua" && <details className="small"><summary>Configuration du NVR</summary><NvrConfig host={host} site={cur.name} /></details>}
-            {health?.error && !health.disks.length && <div className="error-text">Disques : {health.error}</div>}
-            {health?.disks.map((d) => <DiskHealth key={d.name} d={d} />)}
-            {admin && brand === "dahua" && <div className="row small"><span className="muted">Détail des disques en clair (capacité, compteurs de santé) :</span>
-              <DiskDiagnostic host={host} /></div>}
-            <table>
-              <thead><tr><th>Caméra</th><th>Canal</th><th>État</th><th>Dernier enregistrement</th>{admin && <th />}</tr></thead>
-              <tbody>{[...list].sort((a, b) => a.channel - b.channel).map((c) => {
-                const [tone, label] = camState(c, w);
-                const last = w?.cameras.find((x) => x.id === c.id)?.last_record;
-                return (
-                  <tr key={c.id}>
-                    <td><b>{c.name}</b></td><td>{c.channel}</td>
-                    <td><Badge tone={tone}>{label}</Badge></td>
-                    <td>{!c.enabled || !w ? <span className="muted">—</span> : last ?? <Badge tone="bad">aucun sur 24 h</Badge>}</td>
-                    {admin && <td className="right actions">
-                      <button className="btn small" onClick={() => test(c)}>Tester</button>
-                      <button className="btn small" onClick={() => setEdit(c)}>Modifier</button>
-                      <button className="btn small danger" onClick={() => remove(c)}>Supprimer</button>
-                    </td>}
-                  </tr>
-                );
-              })}</tbody>
-              {w && <caption className="muted small">Dernier enregistrement à l’heure du NVR (heure du NVR au relevé : {w.nvr_time || "—"})</caption>}
-            </table>
-          </section>
-        );
-      })}
+      <button className="btn primary" onClick={() => setWizard(true)}>Ajouter un enregistreur</button>
+      <button className="btn small" onClick={() => setEdit("new")}>Ajouter une caméra à la main</button>
+      {here && <button className="btn small" onClick={() => setRename(here)}>Renommer la pharmacie</button>}
+      {here && !cur.cams.length && <button className="btn small danger" onClick={() => removeSite(here)}>Supprimer la pharmacie</button>}
+    </>
+  );
+  const camActions = (c: Camera) => (
+    <div className="wtile-actions">
+      <button className="btn small" onClick={() => test(c)}>Tester</button>
+      <button className="btn small" onClick={() => setEdit(c)}>Modifier</button>
+      <button className="btn small danger" onClick={() => remove(c)}>Supprimer</button>
+    </div>
+  );
+  const nvrActions = (c: Camera) => c.brand !== "dahua" ? null : (
+    <div className="wtile-actions">
+      <button className="btn small" onClick={() => rescan(c)}>Nouvelles caméras</button>
+      <button className="btn small" onClick={() => setCreds(c)}>Identifiants</button>
+    </div>
+  );
+  const modals = (
+    <>
       {rename && (
         <Modal title={`Renommer « ${rename.name} »`} onClose={() => setRename(null)}>
           <form className="form" onSubmit={renameSite}>
@@ -271,22 +214,21 @@ export default function Cameras() {
       {wizard && (
         <Modal wide title={wizard === true ? "Ajouter un enregistreur (NVR)" : `Nouvelles caméras du NVR ${wizard.host}`} onClose={() => setWizard(null)}>
           <NvrWizard sites={sites.data ?? []} current={cur.site} existing={wizard === true ? undefined : wizard}
-                     onDone={(site) => { setWizard(null); ov.reload(); sites.reload(); cur.setSite(site); }} />
+                     onDone={(site) => { setWizard(null); reload(); sites.reload(); cur.setSite(site); }} />
         </Modal>
       )}
       {creds && (
         <Modal title={`Identifiants du NVR ${creds.host}`} onClose={() => setCreds(null)}>
           <p className="muted">Utilisés pour toutes les caméras de cet enregistreur. CamSup vérifie qu’ils fonctionnent avant de les enregistrer.</p>
-          <NvrCredentialsForm cam={creds} onDone={() => { setCreds(null); ov.reload(); }} />
+          <NvrCredentialsForm cam={creds} onDone={() => { setCreds(null); reload(); }} />
         </Modal>
       )}
       {edit && (
         <Modal wide title={edit === "new" ? "Ajouter une caméra (canal du NVR)" : `Modifier « ${edit.name} »`} onClose={() => setEdit(null)}>
-          <CameraForm cam={edit === "new" ? null : edit} sites={sites.data ?? []} onDone={() => { setEdit(null); ov.reload(); }} />
+          <CameraForm cam={edit === "new" ? null : edit} sites={sites.data ?? []} onDone={() => { setEdit(null); reload(); }} />
         </Modal>
       )}
-      <p className="muted small">Disque « à surveiller » : affiché ici seulement. « À remplacer » (secteurs en hausse, seuil SMART
-        dépassé, disque en erreur) : fenêtre d’alerte sur le poste et e-mail à l’installateur. Mis à jour {fmtDateTime(ov.data?.now)}.</p>
     </>
   );
+  return { toolbar, camActions, nvrActions, modals };
 }

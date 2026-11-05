@@ -5,6 +5,7 @@ import { badSectors, diskVerdict, fmtAge } from "../components/DiskHealth";
 import { DiskDiagnostic, NvrConfig } from "../components/NvrConfig";
 import { siteState, useCurrent } from "../components/SiteContext";
 import { Empty, ErrorState, Loading, Notice, PageHeader } from "../components/ui";
+import { useCamAdmin } from "./Cameras";
 import { ago, fmtDateTime } from "../format";
 
 export const KIND: Record<string, string> = {
@@ -62,11 +63,13 @@ function DiskAside({ recorders, admin }: { recorders: RecorderHealth[]; admin: b
 /** Tableau de bord (maquette « Option B — Mur de caméras ») : état du site, mur des caméras, alertes, disques. */
 export default function Dashboard() {
   const { ov: d, error, loading, reload, name, site, cams: all, alerts, recorders, nvr } = useCurrent();
+  const ca = useCamAdmin();                    // gestion des NVR et caméras (intégrateur), ex-page « NVR et disques »
   if (loading && !d) return <Loading />;
   if (error && !d) return <ErrorState message={error} onRetry={reload} />;
   if (!d) return null;
-  if (!d.sites.length) return <><PageHeader title="Tableau de bord" /><Empty>Aucune pharmacie : ajoutez un enregistreur dans « NVR et disques ».</Empty></>;
   const admin = isIntegrator(d.me);
+  if (!d.sites.length) return <><PageHeader title="Tableau de bord">{admin && ca.toolbar}</PageHeader>
+    <Empty>Aucune pharmacie{admin ? " : cliquez sur « Ajouter un enregistreur »." : "."}</Empty>{admin && ca.modals}</>;
   const cams = all.filter((c) => c.enabled).sort((a, b) => a.channel - b.channel || a.name.localeCompare(b.name, "fr", { numeric: true }));
   const offline = cams.filter((c) => c.online === 0).length;
   const seen = cams.filter((c) => c.online === 1).length;
@@ -82,6 +85,7 @@ export default function Dashboard() {
   const problems = alerts.length;
   return (
     <div className="dash">
+      {admin && <div className="row dash-toolbar">{ca.toolbar}</div>}
       {!d.email && admin && <Notice tone="warn">E-mail non configuré : les alertes ne s’affichent que sur ce poste (voir Paramètres).</Notice>}
       <section className="dash-band">
         <div className={`dash-state tone-${state.tone}`}>
@@ -112,7 +116,8 @@ export default function Dashboard() {
               return (
                 <div key={c.id} className={`wtile tone-${t.tone}`}>
                   <div className="wtile-top"><span className="mono wtile-name">{c.name}</span><span className="wtile-badge">{t.status}</span></div>
-                  <div><div className="mono wtile-title">{t.title}</div><div className="wtile-note">{t.note}</div></div>
+                  <div><div className="mono wtile-title">{t.title}</div><div className="wtile-note">{t.note}</div>
+                    {admin && ca.camActions(c)}</div>
                 </div>
               );
             })}
@@ -123,7 +128,9 @@ export default function Dashboard() {
                 <div key={h} className={`wtile wtile-nvr tone-${bad ? "bad" : n ? "ok" : "wait"}`}>
                   <div className="wtile-top"><span className="mono wtile-name">NVR</span><span className="wtile-badge">{bad ? "INJOIGNABLE" : n ? "JOIGNABLE" : "VÉRIFICATION"}</span></div>
                   <div><div className="mono wtile-host">{h}</div>
-                    <div className="wtile-note">{bad ? (nvrAlert ? `Ne répond plus depuis ${ago(nvrAlert.opened_ts)}` : n?.error) : n ? `Relevé il y a ${ago(n.checked)}` : "Premier relevé en cours"}</div></div>
+                    <div className="wtile-note">{bad ? (nvrAlert ? `Ne répond plus depuis ${ago(nvrAlert.opened_ts)}` : n?.error) : n ? `Relevé il y a ${ago(n.checked)}` : "Premier relevé en cours"}</div>
+                    {bad && n?.error && <div className="wtile-note">{n.error}{admin && n.detail ? <> · <code title="Détail technique, pour l’assistance">{n.detail}</code></> : null}</div>}
+                    {admin && (() => { const c = all.find((x) => x.host === h); return c ? ca.nvrActions(c) : null; })()}</div>
                 </div>
               );
             })}
@@ -142,6 +149,7 @@ export default function Dashboard() {
             {alerts.length > 6 && <p className="small muted">… et {alerts.length - 6} autre(s).</p>}
           </section>
           <DiskAside recorders={recorders} admin={admin} />
+          {admin && ca.modals}
           {admin && hosts.map((h) => (
             <section key={h} className="dash-card">
               <div className="dash-head"><h2>Configuration NVR{hosts.length > 1 ? ` ${h}` : ""}</h2></div>

@@ -7,7 +7,6 @@ import { SITE_LABEL, SiteProvider, siteState, useSite } from "./SiteContext";
 export const SECTIONS = [
   { path: "/", label: "Tableau de bord" },
   { path: "/video", label: "Vidéo" },
-  { path: "/cameras", label: "NVR et disques" },
   { path: "/alertes", label: "Alertes" },
 ] as const;
 
@@ -27,7 +26,7 @@ function Sites({ filter }: { filter: string }) {
   return (
     <aside className="sites" aria-label="Pharmacies">
       <div className="sites-head"><h2>Pharmacies</h2><span className="mono small muted">{ov.sites.length} site{ov.sites.length > 1 ? "s" : ""}</span></div>
-      {!ov.sites.length && <p className="muted small">Aucune pharmacie : ajoutez un enregistreur (NVR et disques).</p>}
+      {!ov.sites.length && <p className="muted small">Aucune pharmacie : ajoutez un enregistreur (Tableau de bord).</p>}
       {ov.sites.length > 0 && !list.length && <p className="muted small">Aucune pharmacie ni caméra ne correspond.</p>}
       {list.map((s) => {
         const tone = siteState(ov, s.id);
