@@ -340,3 +340,46 @@ def test_diagnostic_des_disques_lisible():
     etats = {x["id"]: x["etat"] for x in d["smart"]}
     assert etats == {5: "bon", 197: "surveiller", 9: "bon"}
     assert [x["nom"] for x in d["smart"]] == ["Secteurs réalloués", "Secteurs en attente", "Heures de marche"]
+
+
+def test_direct_decoupe_des_images():
+    from app import live
+    a, b = b"\xff\xd8AAA\xff\xd9", b"\xff\xd8BB\xff\xd9"
+    buf = bytearray(b"bruit" + a + b + b"\xff\xd8CC")
+    assert live.split_jpegs(buf) == [a, b] and bytes(buf) == b"\xff\xd8CC"
+    assert "subtype=1" in live.rtsp_url({"username": "ad min", "host": "10.0.0.1", "channel": 3}, "p@ss:/")
+    assert "p%40ss%3A%2F" in live.rtsp_url({"username": "u", "host": "10.0.0.1", "channel": 3}, "p@ss:/")
+
+
+def test_direct_de_bout_en_bout(env, monkeypatch):
+    """Une mire à la place du NVR : le navigateur reçoit des images JPEG ; caméra d'un autre site : 404."""
+    from app import live
+    monkeypatch.setattr(live, "rtsp_url", lambda cam, pw: "testsrc=size=320x240:rate=10")
+    c = client("pharma", "motdepasse-pharma")
+    assert c.get(f"/api/cameras/{env['cam_b']}/live").status_code == 404
+    live.stop_all()
+    s = live.acquire(db.one("SELECT * FROM cameras WHERE id=?", (env["cam_a"],)), "x")
+    import time
+    for _ in range(50):
+        if s.frame:
+            break
+        time.sleep(0.1)
+    assert s.frame and s.frame.startswith(b"\xff\xd8")
+    live.release(s); live.stop_all()
+
+
+def test_mur_image_par_image(env, monkeypatch):
+    from app import live
+    monkeypatch.setattr(live, "rtsp_url", lambda cam, pw: "testsrc=size=320x240:rate=10")
+    live.stop_all()
+    c = client("pharma", "motdepasse-pharma")
+    import time
+    for _ in range(60):
+        r = c.get(f"/api/cameras/{env['cam_a']}/image")
+        if r.status_code == 200:
+            break
+        assert r.status_code == 202
+        time.sleep(0.1)
+    assert r.headers["content-type"] == "image/jpeg" and r.content.startswith(b"\xff\xd8")
+    assert c.get(f"/api/cameras/{env['cam_b']}/image").status_code == 404
+    live.stop_all()

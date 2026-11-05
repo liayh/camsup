@@ -130,7 +130,45 @@ def open_interface(wait: float = 0) -> bool:
         time.sleep(1)
     # 127.0.0.1 plutôt que « localhost » : le navigateur pourrait essayer d'abord ::1, où un autre programme du poste
     # pourrait écouter et recevoir le cookie de session
-    webbrowser.open(f"{'https' if config.HTTPS else 'http'}://127.0.0.1:{config.PORT}/")
+    url = f"{'https' if config.HTTPS else 'http'}://127.0.0.1:{config.PORT}/"
+    if not app_window(url):
+        webbrowser.open(url)
+    return True
+
+
+def app_browser() -> str | None:
+    """Navigateur capable du mode « application » (fenêtre seule, sans barre d'adresse ni onglets) : Edge, présent sur
+    tout Windows 10/11, sinon Chrome / Chromium."""
+    import shutil
+    if os.name == "nt":
+        for base in (os.getenv("ProgramFiles(x86)"), os.getenv("ProgramFiles"), os.getenv("LOCALAPPDATA")):
+            for rel in (r"Microsoft\Edge\Application\msedge.exe", r"Google\Chrome\Application\chrome.exe"):
+                if base and Path(base, rel).is_file():
+                    return str(Path(base, rel))
+        return None
+    for name in ("microsoft-edge", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def app_window(url: str) -> bool:
+    """CamSup dans sa propre fenêtre, comme un logiciel (mode application du navigateur, profil à part pour qu'elle
+    ait sa place dans la barre des tâches) ; False si aucun navigateur adapté (repli : navigateur par défaut)."""
+    exe = app_browser()
+    if not exe:
+        return False
+    profile = user_log_dir().parent / "fenetre"
+    try:
+        profile.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={profile}", "--window-size=1440,900",
+                          "--no-first-run", "--no-default-browser-check", "--disable-features=Translate"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=os.name != "nt")
+    except OSError as e:
+        log.warning("Fenêtre CamSup : %s", e)
+        return False
     return True
 
 
@@ -146,6 +184,9 @@ def main(popups: bool | None = None, browser: bool = True) -> None:
         log.error("Port %s déjà occupé par un autre programme : CamSup ne peut pas démarrer", config.PORT)
         sys.exit(3)
     popup = PopupProcess() if (config.POPUPS if popups is None else popups) else None
+    if browser and not config.FROZEN:
+        # lancement à la main (développement, Linux) : la fenêtre CamSup s'ouvre dès que le serveur répond
+        threading.Thread(target=open_interface, kwargs={"wait": 60}, daemon=True).start()
     if popup:
         from . import db
         db.init()                             # efface l'« arrêt » laissé par l'arrêt précédent avant que la fenêtre le lise

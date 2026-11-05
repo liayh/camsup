@@ -102,6 +102,15 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   `user_sites`, `sessions`, `audit`. `db._drop_obsolete` retire les tables de l'ancienne version et reconstruit `sites`
   sans `client_id` (clés étrangères suspendues pendant l'opération, sinon cascade sur les caméras).
 - Tableau de bord = maquette « Option B — Mur de caméras » (04/11/2026, `pages/Dashboard.tsx`) : bandeau d'état du site (HORS LIGNE / ALERTE / EN LIGNE + 4 compteurs), « Mur de caméras » = tuiles d'**état** par caméra (`camTile` : en ligne, déconnectée, n'enregistre plus, inconnu si NVR injoignable) + tuile NVR, **sans vidéo en direct** ; colonne : alertes, disques (verdicts + diagnostic), configuration NVR. Depuis le 05/11/2026, l'onglet « NVR et disques » est supprimé (`/cameras`, `/enregistreurs` → `/`) : sa gestion est sur le tableau de bord pour l'intégrateur (`pages/Cameras.tsx` → `useCamAdmin()` : barre « Ajouter un enregistreur / une caméra / Renommer la pharmacie », Tester / Modifier / Supprimer sur chaque tuile, « Nouvelles caméras » / « Identifiants » et détail technique sur la tuile NVR). Thème de toute l'interface : couleurs de la maquette, polices Chivo et JetBrains Mono intégrées (`@fontsource`, pas de Google Fonts : CSP + poste hors ligne).
+- **Direct (demandé le 05/11/2026, revient sur le refus précédent)** : `app/live.py` : flux secondaire du NVR en RTSP
+  (`rtsp://hôte:554/cam/realmonitor?channel=N&subtype=1`, mot de passe jamais journalisé) → ffmpeg → images JPEG
+  (5 i/s, 640 px), un ffmpeg par caméra partagé, arrêté 20 s après le dernier spectateur (`live.reap` dans la
+  surveillance), 16 caméras au plus. Mur : `GET /api/cameras/{id}/image` (dernière image, demandée 3 fois/s par
+  `components/LiveImage` : un flux continu par tuile épuiserait les 6 connexions du navigateur) ; agrandi :
+  `GET /api/cameras/{id}/live` (MJPEG). CSP : `img-src blob:`. **Non vérifié sur le vrai NVR** (port 554 supposé).
+- Fenêtre « logiciel » (05/11/2026) : `run.app_window` ouvre l'interface en mode application d'Edge (Windows) ou de
+  Chrome/Chromium (Linux) — fenêtre seule, sans barre d'adresse, profil à part — sinon navigateur par défaut ; en dev,
+  `python -m app.run` l'ouvre dès que le serveur répond.
 - (Avant le 04/11) - Tableau de bord : bandeau « Santé des disques durs » en tête (03/11/2026, `components/DiskHealth` `DiskBanner` : verdict par disque Bon état / À surveiller / À remplacer, secteurs défectueux = 5+197+198 sans le CRC, température, années de marche ; disques illisibles = rouge).
 - Interface (`frontend/`, compilée dans `app/static/app`, thème ardoise et disposition de la maquette du 31/10/2026) : barre du haut
   (Tableau de bord, Vidéo, NVR et disques, Alertes ; recherche, Paramètres), colonne « Pharmacies » à gauche avec l'état de

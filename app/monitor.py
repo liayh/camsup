@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import alerting, config, db, export, nvrwatch, preview, storage
+from . import alerting, config, db, export, live, nvrwatch, preview, storage
 
 log = logging.getLogger("monitor")
 _stop = threading.Event()
@@ -72,6 +72,7 @@ def _loop() -> None:
                 _pool.submit(storage.check, cams)
                 last_hdd = now
             _update_cameras(cams)
+            live.reap()                                # flux en direct sans spectateur : arrêtés
             if now - last_purge > 3600:
                 purge()
                 last_purge = now

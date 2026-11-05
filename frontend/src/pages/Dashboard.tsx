@@ -1,10 +1,12 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import { LiveImage } from "../components/LiveImage";
 import type { Alert, Camera, NvrWatch, RecorderHealth } from "../api/types";
 import { isIntegrator } from "../auth/AuthContext";
 import { badSectors, diskVerdict, fmtAge } from "../components/DiskHealth";
 import { DiskDiagnostic, NvrConfig } from "../components/NvrConfig";
 import { siteState, useCurrent } from "../components/SiteContext";
-import { Empty, ErrorState, Loading, Notice, PageHeader } from "../components/ui";
+import { Empty, ErrorState, Loading, Modal, Notice, PageHeader } from "../components/ui";
 import { useCamAdmin } from "./Cameras";
 import { ago, fmtDateTime } from "../format";
 
@@ -24,6 +26,27 @@ export function camTile(c: Camera, alerts: Alert[], last: string | null | undefi
   if (rec) return { tone: "warn", status: "N'ENREGISTRE PLUS", title: "VUE PAR LE NVR", note: rec.message.replace(/^.*?: /, "") };
   if (c.online == null) return { tone: "wait", status: "VÉRIFICATION", title: "PREMIER RELEVÉ", note: "Dans les secondes qui viennent" };
   return { tone: "ok", status: "EN LIGNE", title: "ENREGISTRE", note: last ? `Dernière image enregistrée : ${last.slice(11, 16)} (heure du NVR)` : "Vue par le NVR" };
+}
+
+/** Tuile du mur : image en direct si le NVR répond (sinon l'état seul), état et boutons par-dessus. */
+function WallTile({ c, t, actions, onZoom }: { c: Camera; t: ReturnType<typeof camTile>; actions: React.ReactNode; onZoom: () => void }) {
+  const [liveState, setLiveState] = useState<{ s: "attente" | "ok" | "erreur"; msg?: string }>({ s: "attente" });
+  const showLive = t.status !== "INCONNU" && c.brand === "dahua" && !!c.enabled;
+  const playing = showLive && liveState.s === "ok";
+  return (
+    <div className={`wtile tone-${t.tone} ${playing ? "wtile-playing" : ""}`}>
+      {showLive && <button type="button" className="wtile-media" onClick={onZoom} aria-label={`Agrandir ${c.name}`}>
+        <LiveImage camId={c.id} onState={(s, msg) => setLiveState((o) => (o.s === s && o.msg === msg ? o : { s, msg }))} /></button>}
+      <div className="wtile-top"><span className="mono wtile-name">{c.name}</span>
+        <span className="wtile-badge">{playing && t.tone === "ok" ? "● DIRECT" : t.status}</span></div>
+      <div className="wtile-bottom">
+        {!playing && <><div className="mono wtile-title">{showLive && liveState.s === "attente" ? "CONNEXION AU DIRECT…" : t.title}</div>
+          <div className="wtile-note">{showLive && liveState.s === "erreur" ? `Direct indisponible : ${liveState.msg}` : t.note}</div></>}
+        {playing && t.tone !== "ok" && <div className="wtile-note">{t.note}</div>}
+        {actions}
+      </div>
+    </div>
+  );
 }
 
 const STATE: Record<string, { label: string; tone: Tone }> = {
@@ -64,6 +87,7 @@ function DiskAside({ recorders, admin }: { recorders: RecorderHealth[]; admin: b
 export default function Dashboard() {
   const { ov: d, error, loading, reload, name, site, cams: all, alerts, recorders, nvr } = useCurrent();
   const ca = useCamAdmin();                    // gestion des NVR et caméras (intégrateur), ex-page « NVR et disques »
+  const [zoom, setZoom] = useState<Camera | null>(null);
   if (loading && !d) return <Loading />;
   if (error && !d) return <ErrorState message={error} onRetry={reload} />;
   if (!d) return null;
@@ -111,16 +135,10 @@ export default function Dashboard() {
           <div className="dash-head"><h2>Mur de caméras</h2><span className="mono small muted">Mis à jour {fmtDateTime(d.now)}</span>
             <button className="btn small" onClick={reload}>Actualiser</button></div>
           <div className="wall">
-            {cams.map((c) => {
-              const t = camTile(c, alerts, lastOf(c), down.has(c.host));
-              return (
-                <div key={c.id} className={`wtile tone-${t.tone}`}>
-                  <div className="wtile-top"><span className="mono wtile-name">{c.name}</span><span className="wtile-badge">{t.status}</span></div>
-                  <div><div className="mono wtile-title">{t.title}</div><div className="wtile-note">{t.note}</div>
-                    {admin && ca.camActions(c)}</div>
-                </div>
-              );
-            })}
+            {cams.map((c) => (
+              <WallTile key={c.id} c={c} t={camTile(c, alerts, lastOf(c), down.has(c.host))}
+                        actions={admin ? ca.camActions(c) : null} onZoom={() => setZoom(c)} />
+            ))}
             {hosts.map((h) => {
               const n = nvr.find((x) => x.host === h);
               const bad = !!n?.error;
@@ -150,6 +168,13 @@ export default function Dashboard() {
           </section>
           <DiskAside recorders={recorders} admin={admin} />
           {admin && ca.modals}
+          {zoom && (
+            <Modal wide title={`${zoom.name} · en direct`} onClose={() => setZoom(null)}>
+              <img className="live-zoom" src={`/api/cameras/${zoom.id}/live`} alt={`${zoom.name} en direct`} />
+              <p className="muted small">Flux secondaire du NVR (petite résolution, quelques images par seconde). Pour revoir
+                un moment ou l’extraire en qualité d’origine : onglet <Link to="/video">Vidéo</Link>.</p>
+            </Modal>
+          )}
           {admin && hosts.map((h) => (
             <section key={h} className="dash-card">
               <div className="dash-head"><h2>Configuration NVR{hosts.length > 1 ? ` ${h}` : ""}</h2></div>

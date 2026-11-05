@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import accounts, alerting, cameras, config, dahuarpc, db, export, fenetre, mail, monitor, nvrwatch, preview, security, storage
+from . import accounts, alerting, cameras, config, dahuarpc, db, export, fenetre, live, mail, monitor, nvrwatch, preview, security, storage
 from .accounts import User
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -48,6 +48,7 @@ async def lifespan(_: FastAPI):
     monitor.start()
     yield
     monitor.stop()
+    live.stop_all()
     dahuarpc.close_all()
     db.set_setting("heartbeat", "arret")       # arrêt normal : la fenêtre d'alerte se ferme sans alerter
 
@@ -548,6 +549,40 @@ def add_nvr(body: NvrAdd, request: Request):
     return {"added": len(added)}
 
 
+@router.get("/cameras/{cid}/live")
+def camera_live(cid: int, request: Request, user: User = Me):
+    """Image en direct de la caméra (MJPEG, pour une balise <img>) : tous les rôles, sur leurs sites seulement."""
+    cam = _cam(user, cid)
+    if cam["brand"] != "dahua" or not cam["enabled"]:
+        raise HTTPException(400, "Direct disponible seulement pour une caméra active derrière un NVR Dahua")
+    try:
+        s = live.acquire(cam, security.decrypt(cam["password_enc"]))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    return StreamingResponse(live.mjpeg(s), media_type="multipart/x-mixed-replace; boundary=image",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@router.get("/cameras/{cid}/image")
+def camera_image(cid: int, user: User = Me):
+    """Dernière image en direct de la caméra (JPEG) : le mur de caméras en demande plusieurs par seconde (des
+    requêtes courtes : un navigateur n'ouvre que 6 connexions à la fois, un flux continu par caméra bloquerait tout)."""
+    cam = _cam(user, cid)
+    if cam["brand"] != "dahua" or not cam["enabled"]:
+        raise HTTPException(400, "Direct disponible seulement pour une caméra active derrière un NVR Dahua")
+    try:
+        s = live.latest(cam, security.decrypt(cam["password_enc"]))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    with s.lock:
+        frame = s.frame
+    if frame is None:
+        if s.error and not s.alive:
+            raise HTTPException(502, s.error)
+        return Response(status_code=202, headers={"Cache-Control": "no-store"})        # image pas encore arrivée
+    return Response(frame, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @admin.post("/cameras/{cid}/test")
 def test_camera(cid: int, request: Request):
     """Interroge l'enregistreur tout de suite : Dahua → caméra vue et dernier enregistrement ; Hikvision → disques."""
@@ -817,7 +852,7 @@ def health():
 
 # ------------------------------------------------------------------ interface (React, `cd frontend && npm run build`)
 SPA = STATIC / "app"
-SPA_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; "
+SPA_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; "
            "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 _SPA_ROUTES = {"video", "sites", "cameras", "alertes", "enregistreurs", "utilisateurs", "parametres"}
 
