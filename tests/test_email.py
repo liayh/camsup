@@ -63,7 +63,7 @@ def test_reglages_et_mot_de_passe_jamais_renvoye(env, smtp):
     assert admin.post("/api/notify/test", headers=H).status_code == 200
     assert smtp.logins == [("pharma@gmail.com", "mot-de-passe-application")]
     msg = smtp.sent[0]
-    assert msg["To"] == "installateur@exemple.fr, associe@exemple.fr, camsupalerte@gmail.com" and "pharma@gmail.com" in msg["From"]
+    assert msg["To"] == "camsupalerte@gmail.com" and "pharma@gmail.com" in msg["From"]    # seule destinataire
     assert admin.get("/api/settings/email").json()["last"]["ok"] is True
     assert admin.get("/api/overview").json()["email"] is True
     assert "email.reglages" in [a["action"] for a in db.q("SELECT action FROM audit")]
@@ -96,11 +96,15 @@ def test_alerte_critique_envoyee_en_arriere_plan(env, smtp, monkeypatch):
     mail.save("smtp.exemple.fr", 587, "starttls", "", None, "", ["installateur@exemple.fr"])
     monkeypatch.setattr(mail._pool, "submit", lambda fn: fn())
     alerting.raise_alert("rec:1", None, "rec", "Caméra 1 n'est plus enregistrée")
-    alerting.raise_alert("camera:1", None, "camera", "Caméra 1 déconnectée")                # fenêtre seulement
+    alerting.raise_alert("camera:1", None, "camera", "Caméra 1 déconnectée")                # e-mail aussi (05/11)
+    alerting.raise_alert("offline:1", None, "offline", "Équipement injoignable")            # fenêtre seulement
     alerting.clear_alert("rec:1")
     alerting.clear_alert("camera:1")
     assert [m["Subject"] for m in smtp.sent] == ["[CamSup] 🔴 Caméra 1 n'est plus enregistrée",
-                                                  "[CamSup] 🟢 Rétabli : Caméra 1 n'est plus enregistrée"]
+                                                  "[CamSup] 🔴 Caméra 1 déconnectée",
+                                                  "[CamSup] 🟢 Rétabli : Caméra 1 n'est plus enregistrée",
+                                                  "[CamSup] 🟢 Rétabli : Caméra 1 déconnectée"]
+    assert {m["To"] for m in smtp.sent} == {"camsupalerte@gmail.com"}
     assert smtp.logins == []                                                              # relais sans compte
 
 
@@ -145,16 +149,11 @@ def test_reglages_livres_avec_l_installateur(env, smtp, monkeypatch, tmp_path):
 
 
 def test_adresse_toujours_prevenue(smtp):
-    """Chaque e-mail d'alerte part aussi vers camsupalerte@gmail.com, sans doublon ni saisie."""
+    """Seule camsupalerte@gmail.com reçoit les alertes (05/11/2026) : les adresses saisies autrefois sont ignorées."""
     from app import config, mail
     assert config.ALERT_EMAIL_ALWAYS == "camsupalerte@gmail.com"
-    mail.save("smtp.gmail.com", 465, "ssl", "envoi@gmail.com", "mdp", "", ["pharmacien@exemple.fr"])
-    mail.send("[CamSup] essai", "texte")
-    assert smtp.sent[-1]["To"] == "pharmacien@exemple.fr, camsupalerte@gmail.com"
-    mail.save("smtp.gmail.com", 465, "ssl", "envoi@gmail.com", None, "", [])          # aucun autre destinataire
-    assert mail.configured()
+    mail.save("smtp.gmail.com", 465, "ssl", "envoi@gmail.com", "mdp", "", ["benjamin@exemple.fr"])
     mail.send("[CamSup] essai", "texte")
     assert smtp.sent[-1]["To"] == "camsupalerte@gmail.com"
-    mail.save("smtp.gmail.com", 465, "ssl", "envoi@gmail.com", None, "", ["CamSupAlerte@gmail.com"])
-    mail.send("[CamSup] essai", "texte")
-    assert smtp.sent[-1]["To"] == "CamSupAlerte@gmail.com"                           # pas deux fois
+    mail.save("smtp.gmail.com", 465, "ssl", "envoi@gmail.com", None, "", [])
+    assert mail.configured()

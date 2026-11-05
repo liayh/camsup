@@ -41,7 +41,7 @@ function Email() {
   useEffect(() => {
     if (cfg.data && !form) {
       const d = cfg.data;
-      setForm({ host: d.host, port: d.port, security: d.security, user: d.user, password: "", sender: d.sender, to: d.to.join(", ") });
+      setForm({ host: d.host, port: d.port, security: d.security, user: d.user, password: "", sender: d.sender, to: "" });   // destinataires : seulement l'adresse fixe (anciennes adresses effacées à l'enregistrement)
       setAuto(!d.host);                                // serveur déjà réglé : gardé tel quel
     }
   }, [cfg.data, form]);
@@ -63,7 +63,7 @@ function Email() {
       setForm({ ...form, host: saved.host, port: saved.port, security: saved.security, password: "" });
       try {
         await post("/notify/test");
-        toast(`Réglages enregistrés. E-mail de test envoyé à ${saved.to.join(", ")} : vérifiez la boîte de réception (et les indésirables)`, "ok");
+        toast(`Réglages enregistrés. E-mail de test envoyé à ${saved.always || saved.to.join(", ")} : vérifiez la boîte de réception (et les indésirables)`, "ok");
       } catch (err) {
         toast(`Réglages enregistrés, mais l’envoi a échoué : ${(err as Error).message}`, "bad");
       }
@@ -77,18 +77,17 @@ function Email() {
     <section className="card"><h2>E-mail à l’installateur</h2>
       <p>{d.configured ? <Badge tone="ok">configuré</Badge> : <Badge tone="bad">non configuré</Badge>}
         {d.configured && <span className="muted small"> envoi par {d.host} ({d.user || "sans compte"})</span>}</p>
-      <p className="muted">Envoyé quand l’enregistreur est injoignable, n’enregistre plus une caméra, ou qu’un disque est à
-        remplacer, puis quand c’est rétabli. Le pharmacien, lui, est prévenu par la fenêtre d’alerte du poste.</p>
+      <p className="muted">Un e-mail part vers <b className="mono">{d.always || d.to.join(", ")}</b> quand : la santé d’un disque dur
+        se dégrade, une ou plusieurs caméras sont déconnectées, une caméra n’est plus enregistrée sur le disque dur, ou la
+        connexion avec l’enregistreur (NVR) est perdue ; puis quand c’est rétabli. Saisissez ci-dessous l’adresse e-mail et le
+        mot de passe du compte qui <b>envoie</b> ces alertes.</p>
       <form className="form" onSubmit={submit}>
         <div className="grid-form form">
           <label>Adresse e-mail qui envoie les alertes<input type="email" required value={form.user} onChange={(e) => set("user", e.target.value)}
             autoComplete="off" placeholder="alertes@exemple.fr" /></label>
           <label>Mot de passe de cette adresse<input type="password" value={form.password} onChange={(e) => set("password", e.target.value)}
             autoComplete="new-password" placeholder={d.has_password ? "inchangé si vide" : ""} required={!d.has_password} /></label>
-          <label>Autres destinataires (facultatif)<input value={form.to} onChange={(e) => set("to", e.target.value)}
-            placeholder="vous@exemple.fr, collegue@exemple.fr" /></label>
         </div>
-        {d.always && <p className="small">Toujours prévenue, pour chaque alerte : <b className="mono">{d.always}</b></p>}
         {d.app_password && <Notice tone="warn">Adresse {d.app_password} : le mot de passe habituel est refusé, il faut un
           « mot de passe d’application » (réglages de sécurité du compte, validation en 2 étapes activée).</Notice>}
         <details>

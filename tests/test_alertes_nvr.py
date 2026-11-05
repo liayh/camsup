@@ -67,7 +67,7 @@ def test_camera_deconnectee_apres_deux_releves(env):
     nvrwatch.evaluate("10.0.0.9", env["cams"], result(conn=("Unconnect", "Connected")))
     a = open_alerts()[f"camera:{c1['id']}"]
     assert a["kind"] == "camera" and "Unconnect" in a["message"]
-    assert env["sent"][-1][1] is False                                 # fenêtre seulement, pas d'e-mail
+    assert env["sent"][-1][1] is True                                  # fenêtre et e-mail (05/11/2026)
     nvrwatch.evaluate("10.0.0.9", env["cams"], result())
     assert f"camera:{c1['id']}" not in open_alerts()
 
@@ -88,8 +88,9 @@ def test_nvr_injoignable_apres_deux_echecs(env):
 
 
 def test_types_envoyes_par_email():
-    assert set(config.EMAIL_KINDS) == {"nvr", "rec", "hdd"}
-    assert "camera" in config.POPUP_KINDS and "camera" not in config.EMAIL_KINDS
+    # 05/11/2026 : perte du NVR, caméra(s) déconnectée(s), enregistrement arrêté, santé du disque → e-mail
+    assert set(config.EMAIL_KINDS) == {"nvr", "camera", "rec", "hdd"}
+    assert "camera" in config.POPUP_KINDS
 
 
 def _disk(realloc: int, pending: int = 0, serial: str = "WD-123") -> dict:
@@ -340,7 +341,7 @@ def test_camera_debranchee_vue_par_l_arret_des_images(env):
     a = open_alerts()
     assert set(a) == {f"camera:{c2['id']}"}
     assert "n'envoie plus d'images au NVR depuis 16 s" in a[f"camera:{c2['id']}"]["message"]
-    assert env["sent"][-1][1] is False                                   # fenêtre seulement
+    assert env["sent"][-1][1] is True                                    # fenêtre et e-mail (05/11/2026)
     assert [c["state"] for c in entry["cameras"]] == ["Connected", "NoVideo"]
     assert nvrwatch.online(c2["id"]) is False
     nvrwatch.evaluate("10.0.0.9", env["cams"], result())                 # rebranchée : images à jour

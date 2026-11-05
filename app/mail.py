@@ -125,12 +125,11 @@ def current() -> dict:
 
 
 def all_recipients(s: dict) -> list[str]:
-    """Destinataires saisis + l'adresse toujours prévenue (`config.ALERT_EMAIL_ALWAYS`), sans doublon."""
-    out: list[str] = []
-    for a in [*(s.get("to") or []), config.ALERT_EMAIL_ALWAYS]:
-        if a and EMAIL_RE.match(a) and a.lower() not in (x.lower() for x in out):
-            out.append(a)
-    return out
+    """Destinataire des alertes : seulement `config.ALERT_EMAIL_ALWAYS` (camsupalerte@gmail.com, 05/11/2026) ; les
+    adresses saisies autrefois sont ignorées. Sans cette adresse (réglage vidé) : les destinataires saisis."""
+    if config.ALERT_EMAIL_ALWAYS and EMAIL_RE.match(config.ALERT_EMAIL_ALWAYS):
+        return [config.ALERT_EMAIL_ALWAYS]
+    return [a for a in (s.get("to") or []) if EMAIL_RE.match(a)]
 
 
 def configured(s: dict | None = None) -> bool:

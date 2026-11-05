@@ -67,8 +67,8 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   Équipements regroupés par `cameras.device_key()` (le jeton Fernet diffère par caméra : ne pas grouper par `password_enc`).
 - Alertes rétablies effacées 7 jours après leur fin (`ALERT_RETENTION_DAYS`, purge horaire de `monitor`, 05/11/2026) ; en cours : jamais.
 - `alerting.py` : `raise_alert(key, …)` / `clear_alert(key)` dédupliquées par clé ; e-mail seulement pour
-  `config.EMAIL_KINDS` (`nvr`, `rec`, `hdd`), webhook pour tout ; envois en arrière-plan.
-- Toujours prévenue (05/11/2026) : `config.ALERT_EMAIL_ALWAYS` = camsupalerte@gmail.com ajoutée à chaque e-mail (`mail.all_recipients`, sans doublon) ; « Autres destinataires » devient facultatif. Il faut toujours un compte d'envoi (adresse + mot de passe d'application) : **ne jamais mettre `email.env` dans un installateur publié** (le lien GitHub est public).
+  `config.EMAIL_KINDS` (`nvr`, `camera`, `rec`, `hdd`), webhook pour tout ; envois en arrière-plan.
+- E-mail (05/11/2026) : **seule destinataire camsupalerte@gmail.com** (`config.ALERT_EMAIL_ALWAYS`, `mail.all_recipients` ; adresses saisies autrefois ignorées, champ retiré) ; l'utilisateur saisit seulement le compte qui **envoie** (adresse + mot de passe). E-mails : perte du NVR, caméra(s) déconnectée(s), enregistrement arrêté, santé du disque (`EMAIL_KINDS` = nvr, camera, rec, hdd). Il faut toujours un compte d'envoi (adresse + mot de passe d'application) : **ne jamais mettre `email.env` dans un installateur publié** (le lien GitHub est public).
 - `mail.py` : réglages e-mail saisis dans Paramètres (`settings.email`, JSON, mot de passe chiffré ; sinon `SMTP_*` du
   .env), plusieurs destinataires, STARTTLS / SSL / aucune, résultat du dernier envoi (`settings.email_status`).
   Formulaire : adresse + mot de passe + destinataire ; serveur déduit par `mail.detect` (fournisseurs connus,
@@ -188,5 +188,5 @@ PowerShell manquent (l'installateur affichera l'échec de `installer-tache.ps1`)
   versions pip figées (`constraints.txt`) mais sans empreintes ; images Docker et PyInstaller non figés ; aucune
   signature Authenticode.
 - NVR : certificats non vérifiés (pas d'épinglage), session RPC2 en HTTP si le NVR le permet : compte NVR en lecture
-  seule recommandé. Intégrité des extraits : pas de signature du ZIP. Alertes `camera` sans e-mail (choix).
+  seule recommandé. Intégrité des extraits : pas de signature du ZIP. Alertes `camera` envoyées par e-mail depuis le 05/11/2026.
 - `/MOTDEPASSE=` visible dans les journaux de déploiement : changer le mot de passe à la première connexion.

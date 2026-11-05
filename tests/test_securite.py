@@ -255,7 +255,7 @@ def test_fenetre_ne_pretend_pas_avoir_prevenu():
     assert "a été prévenu" not in popup.email_sentence(rows, True, {"ok": True, "ts": 900})   # envoi d'avant l'alerte
     assert "n'a pas pu partir" in popup.email_sentence(rows, True, {"ok": False, "ts": 1005})
     cam = [{"key": "camera:1", "kind": "camera", "message": "Caméra débranchée", "opened_ts": 1000}]
-    assert popup.email_sentence(cam, True, {"ok": True, "ts": 1005}) == ""
+    assert "a été prévenu" in popup.email_sentence(cam, True, {"ok": True, "ts": 1005})     # caméra : e-mail aussi
 
 
 def test_premier_compte_cree_par_l_utilisateur(monkeypatch):

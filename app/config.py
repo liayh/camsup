@@ -98,7 +98,9 @@ RECORD_STALE_MINUTES = int(os.getenv("RECORD_STALE_MINUTES", "15"))      # sans 
 POPUPS = os.getenv("POPUPS", "1") not in ("0", "false", "non")
 POPUP_REMIND_HOURS = float(os.getenv("POPUP_REMIND_HOURS", "4"))         # fenêtre fermée → rouverte après ce délai
 POPUP_KINDS = ("nvr", "camera", "rec", "hdd", "offline")  # types d'alerte affichés au pharmacien
-EMAIL_KINDS = ("nvr", "rec", "hdd")                        # types d'alerte envoyés par e-mail (état critique du NVR)
+# types d'alerte envoyés par e-mail (05/11/2026) : perte du NVR, caméra(s) déconnectée(s), enregistrement arrêté,
+# santé du disque dur
+EMAIL_KINDS = ("nvr", "camera", "rec", "hdd")
 
 # Extrait vidéo pour les forces de l'ordre (NVR Dahua)
 EXPORT_MAX_MINUTES = int(os.getenv("EXPORT_MAX_MINUTES", "15"))          # durée maximale d'un extrait
