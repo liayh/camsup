@@ -124,9 +124,18 @@ def current() -> dict:
     return load(db.setting("email") or None)
 
 
+def all_recipients(s: dict) -> list[str]:
+    """Destinataires saisis + l'adresse toujours prévenue (`config.ALERT_EMAIL_ALWAYS`), sans doublon."""
+    out: list[str] = []
+    for a in [*(s.get("to") or []), config.ALERT_EMAIL_ALWAYS]:
+        if a and EMAIL_RE.match(a) and a.lower() not in (x.lower() for x in out):
+            out.append(a)
+    return out
+
+
 def configured(s: dict | None = None) -> bool:
     s = s or current()
-    return bool(s.get("host") and s.get("to"))
+    return bool(s.get("host") and all_recipients(s))
 
 
 def public(s: dict) -> dict:
@@ -134,7 +143,8 @@ def public(s: dict) -> dict:
     status = db.setting("email_status")
     return {"host": s.get("host", ""), "port": s.get("port", 587), "security": s.get("security", "starttls"),
             "user": s.get("user", ""), "has_password": bool(s.get("password_enc")), "sender": s.get("sender", ""),
-            "to": s.get("to", []), "source": s.get("source", ""), "configured": configured(s),
+            "to": s.get("to", []), "always": config.ALERT_EMAIL_ALWAYS, "source": s.get("source", ""),
+            "configured": configured(s),
             "app_password": APP_PASSWORD.get(s.get("host", ""), ""),
             "last": json.loads(status) if status else None}
 
@@ -159,7 +169,7 @@ def send(subject: str, body: str, s: dict | None = None) -> None:
     msg = EmailMessage()
     msg["Subject"] = subject[:150]
     msg["From"] = formataddr(("CamSup", s.get("sender") or s.get("user") or "camsup@localhost"))
-    msg["To"] = ", ".join(s["to"])
+    msg["To"] = ", ".join(all_recipients(s))
     msg.set_content(body)
     port, sec = int(s.get("port") or 587), s.get("security", "starttls")
     ctx = ssl.create_default_context()

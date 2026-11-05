@@ -45,6 +45,8 @@ export interface Preview { id: string; camera_id: number; start_ts: number; end_
 export type EmailSecurity = "starttls" | "ssl" | "aucune";
 export interface EmailSettings {
   host: string; port: number; security: EmailSecurity; user: string; has_password: boolean; sender: string; to: string[];
+  /** Toujours prévenue en plus des destinataires saisis (adresse d'alerte de l'installateur). */
+  always: string;
   source: string; configured: boolean; app_password: string; last: { ts: number; ok: boolean; error: string } | null;
 }
 

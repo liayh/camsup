@@ -18,7 +18,7 @@ SAFE_KEYS = {"CHECK_INTERVAL", "OFFLINE_ALERT_SECONDS", "HDD_CHECK_SECONDS", "CA
              "CAMERA_STALL_SECONDS", "NVR_FAILS", "NVR_BOOT_GRACE_SECONDS", "RECORD_STALE_MINUTES", "POPUPS",
              "POPUP_REMIND_HOURS", "EXPORT_MAX_MINUTES", "EXPORT_RETENTION_DAYS", "ADMIN_USER", "PORT",
              "SESSION_HOURS", "AUDIT_RETENTION_DAYS", "ALERT_RETENTION_DAYS", "WEBHOOK_URL", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_FROM",
-             "ALERT_EMAIL_TO", "ALLOWED_HOSTS"}
+             "ALERT_EMAIL_TO", "ALERT_EMAIL_ALWAYS", "ALLOWED_HOSTS"}
 
 
 def _load_env_file(path: Path, allowed: set[str] | None = None) -> None:
@@ -133,6 +133,8 @@ SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "camsup@localhost")
 ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "")
+# toujours prévenu, en plus des destinataires saisis (demandé le 05/11/2026) : l'adresse d'alerte de l'installateur
+ALERT_EMAIL_ALWAYS = os.getenv("ALERT_EMAIL_ALWAYS", "camsupalerte@gmail.com").strip()
 
 for d in (DATA_DIR, LOG_DIR):
     try:

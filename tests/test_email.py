@@ -63,7 +63,7 @@ def test_reglages_et_mot_de_passe_jamais_renvoye(env, smtp):
     assert admin.post("/api/notify/test", headers=H).status_code == 200
     assert smtp.logins == [("pharma@gmail.com", "mot-de-passe-application")]
     msg = smtp.sent[0]
-    assert msg["To"] == "installateur@exemple.fr, associe@exemple.fr" and "pharma@gmail.com" in msg["From"]
+    assert msg["To"] == "installateur@exemple.fr, associe@exemple.fr, camsupalerte@gmail.com" and "pharma@gmail.com" in msg["From"]
     assert admin.get("/api/settings/email").json()["last"]["ok"] is True
     assert admin.get("/api/overview").json()["email"] is True
     assert "email.reglages" in [a["action"] for a in db.q("SELECT action FROM audit")]
@@ -142,3 +142,19 @@ def test_reglages_livres_avec_l_installateur(env, smtp, monkeypatch, tmp_path):
     preset.write_text("SMTP_USER=autre@orange.fr\nSMTP_PASSWORD=x\nALERT_EMAIL_TO=a@exemple.fr\n", encoding="utf-8")
     assert mail.import_preset() is False and not preset.exists()
     assert mail.current()["host"] == "smtp.free.fr"
+
+
+def test_adresse_toujours_prevenue(smtp):
+    """Chaque e-mail d'alerte part aussi vers camsupalerte@gmail.com, sans doublon ni saisie."""
+    from app import config, mail
+    assert config.ALERT_EMAIL_ALWAYS == "camsupalerte@gmail.com"
+    mail.save("smtp.gmail.com", 465, "ssl", "envoi@gmail.com", "mdp", "", ["pharmacien@exemple.fr"])
+    mail.send("[CamSup] essai", "texte")
+    assert smtp.sent[-1]["To"] == "pharmacien@exemple.fr, camsupalerte@gmail.com"
+    mail.save("smtp.gmail.com", 465, "ssl", "envoi@gmail.com", None, "", [])          # aucun autre destinataire
+    assert mail.configured()
+    mail.send("[CamSup] essai", "texte")
+    assert smtp.sent[-1]["To"] == "camsupalerte@gmail.com"
+    mail.save("smtp.gmail.com", 465, "ssl", "envoi@gmail.com", None, "", ["CamSupAlerte@gmail.com"])
+    mail.send("[CamSup] essai", "texte")
+    assert smtp.sent[-1]["To"] == "CamSupAlerte@gmail.com"                           # pas deux fois

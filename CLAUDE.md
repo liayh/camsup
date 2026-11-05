@@ -68,6 +68,7 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
 - Alertes rétablies effacées 7 jours après leur fin (`ALERT_RETENTION_DAYS`, purge horaire de `monitor`, 05/11/2026) ; en cours : jamais.
 - `alerting.py` : `raise_alert(key, …)` / `clear_alert(key)` dédupliquées par clé ; e-mail seulement pour
   `config.EMAIL_KINDS` (`nvr`, `rec`, `hdd`), webhook pour tout ; envois en arrière-plan.
+- Toujours prévenue (05/11/2026) : `config.ALERT_EMAIL_ALWAYS` = camsupalerte@gmail.com ajoutée à chaque e-mail (`mail.all_recipients`, sans doublon) ; « Autres destinataires » devient facultatif. Il faut toujours un compte d'envoi (adresse + mot de passe d'application) : **ne jamais mettre `email.env` dans un installateur publié** (le lien GitHub est public).
 - `mail.py` : réglages e-mail saisis dans Paramètres (`settings.email`, JSON, mot de passe chiffré ; sinon `SMTP_*` du
   .env), plusieurs destinataires, STARTTLS / SSL / aucune, résultat du dernier envoi (`settings.email_status`).
   Formulaire : adresse + mot de passe + destinataire ; serveur déduit par `mail.detect` (fournisseurs connus,

@@ -85,9 +85,10 @@ function Email() {
             autoComplete="off" placeholder="alertes@exemple.fr" /></label>
           <label>Mot de passe de cette adresse<input type="password" value={form.password} onChange={(e) => set("password", e.target.value)}
             autoComplete="new-password" placeholder={d.has_password ? "inchangé si vide" : ""} required={!d.has_password} /></label>
-          <label>Qui reçoit les alertes<input required value={form.to} onChange={(e) => set("to", e.target.value)}
+          <label>Autres destinataires (facultatif)<input value={form.to} onChange={(e) => set("to", e.target.value)}
             placeholder="vous@exemple.fr, collegue@exemple.fr" /></label>
         </div>
+        {d.always && <p className="small">Toujours prévenue, pour chaque alerte : <b className="mono">{d.always}</b></p>}
         {d.app_password && <Notice tone="warn">Adresse {d.app_password} : le mot de passe habituel est refusé, il faut un
           « mot de passe d’application » (réglages de sécurité du compte, validation en 2 étapes activée).</Notice>}
         <details>
