@@ -45,7 +45,8 @@ class Session:
         except (requests.ConnectionError, requests.Timeout):          # port HTTP muet : HTTPS directement
             base = devicehttp.https_base(self.host)
             if not base:
-                raise
+                ports = ", ".join(str(p) for p in devicehttp.HTTPS_PORTS)
+                raise requests.ConnectionError(f"aucun port ne répond : {self.port} (HTTP), {ports} (HTTPS)") from None
             return base
         if r.is_redirect and r.headers.get("Location", "").startswith("https://"):
             # seulement le port : un NVR (ou un tiers à sa place) ne doit pas envoyer la connexion vers un autre hôte

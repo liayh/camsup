@@ -52,7 +52,8 @@ def test_connexion_et_authentification_reutilisees(serveur):
         assert r.text == "ok"
     assert stats["refus"] == 1                  # un seul défi 401, au lieu d'un par requête
     assert stats["requetes"] == 6               # au lieu de 10
-    assert len(stats["connexions"]) == 1        # une seule connexion gardée ouverte
+    # une connexion par requête, refermée : rien ne reste ouvert sur le NVR (un vieux NVR en accepte peu)
+    assert len(stats["connexions"]) == 5
 
 
 def test_port_http_mort_retenu(monkeypatch):

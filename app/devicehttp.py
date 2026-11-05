@@ -21,7 +21,6 @@ CACHE_SECONDS = 600
 _cache: dict[str, tuple[str, float]] = {}       # hôte → (« https://hôte:port », horodatage)
 _http_dead: dict[str, float] = {}               # hôte → instant où son port HTTP n'a pas répondu
 _lock = threading.Lock()
-_local = threading.local()                      # sessions par fil d'exécution (requests.Session n'est pas partageable)
 _auths: dict[tuple, HTTPDigestAuth] = {}
 
 
@@ -36,14 +35,19 @@ def digest(user: str, pw: str) -> HTTPDigestAuth:
         return auth
 
 
-def _session() -> requests.Session:
-    """Connexions gardées ouvertes (keep-alive) : pas de nouvelle connexion ni de nouvelle négociation HTTPS à chaque
-    requête vers le NVR."""
-    s = getattr(_local, "session", None)
-    if s is None:
-        s = _local.session = requests.Session()
-        s.trust_env = False                     # NVR du réseau local : jamais par un proxy
-    return s
+class _OneShot:
+    """Une connexion par requête, refermée ensuite (05/11/2026). Les connexions gardées ouvertes (une par fil
+    d'exécution) pouvaient saturer un vieux NVR, qui n'en accepte que quelques-unes : il cessait de répondre."""
+    @staticmethod
+    def request(method: str, url: str, **kw) -> requests.Response:
+        with requests.Session() as s:
+            s.trust_env = False                 # NVR du réseau local : jamais par un proxy
+            r = s.request(method, url, **kw)
+        return r
+
+
+def _session() -> _OneShot:
+    return _OneShot()
 
 
 def https_base(host: str, timeout: float = 4) -> str | None:
@@ -55,7 +59,9 @@ def https_base(host: str, timeout: float = 4) -> str | None:
     for port in HTTPS_PORTS:
         base = f"https://{host}:{port}"
         try:
-            requests.get(base + "/", timeout=timeout, verify=False, allow_redirects=False)
+            with requests.Session() as s:
+                s.trust_env = False
+                s.get(base + "/", timeout=timeout, verify=False, allow_redirects=False).close()
         except requests.RequestException:
             continue
         with _lock:
