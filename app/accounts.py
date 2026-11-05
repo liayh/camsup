@@ -29,7 +29,7 @@ _flock = threading.Lock()
 LOCK_FAILS, LOCK_SECONDS = 5, 900
 IP_LOCK_FAILS = 20              # échecs depuis une même adresse, tous comptes confondus (essai de nombreux identifiants)
 # Depuis ce PC (127.0.0.1 : tous les utilisateurs du poste ont la même adresse) : verrou court, sans verrou par adresse,
-# sinon n'importe qui sur le poste bloquerait l'intégrateur et les pharmaciens à volonté. Reste 5 essais par minute.
+# sinon n'importe qui sur le poste bloquerait l'installateur et les pharmaciens à volonté. Reste 5 essais par minute.
 LOCAL_LOCK_SECONDS = 60
 LOOPBACK = ("127.0.0.1", "::1")
 _blocked_logged: dict[str, float] = {}
@@ -66,7 +66,7 @@ class User:
     id: int
     username: str
     role: str
-    site_ids: frozenset[int] | None          # None = tous les sites (intégrateur)
+    site_ids: frozenset[int] | None          # None = tous les sites (installateur)
 
     @property
     def is_integrator(self) -> bool:
@@ -98,7 +98,7 @@ def setup_needed() -> bool:
 
 
 def create_first(username: str, password: str) -> User | None:
-    """Premier compte (intégrateur), créé par l'utilisateur ; None si un compte existe déjà (deux essais en même temps :
+    """Premier compte (installateur), créé par l'utilisateur ; None si un compte existe déjà (deux essais en même temps :
     un seul gagne, l'insertion est conditionnelle)."""
     uid = db.x("INSERT INTO users(username,pw_hash,role,created_ts) SELECT ?,?,'integrator',? "
                "WHERE NOT EXISTS (SELECT 1 FROM users)", (username, hash_password(password), db.now()))
@@ -110,12 +110,12 @@ def create_first(username: str, password: str) -> User | None:
 
 
 def bootstrap(password: str) -> bool:
-    """Base sans compte : crée l'intégrateur ADMIN_USER. Renvoie True si un compte a été créé."""
+    """Base sans compte : crée l'installateur ADMIN_USER. Renvoie True si un compte a été créé."""
     if db.one("SELECT id FROM users LIMIT 1"):
         return False
     db.x("INSERT INTO users(username,pw_hash,role,created_ts) VALUES(?,?,?,?)",
          (config.ADMIN_USER, hash_password(password), "integrator", db.now()))
-    audit(None, "compte.cree", obj=config.ADMIN_USER, detail="compte intégrateur initial")
+    audit(None, "compte.cree", obj=config.ADMIN_USER, detail="compte installateur initial")
     return True
 
 
@@ -214,7 +214,7 @@ def current_user(request: Request, creds: HTTPBasicCredentials | None = Depends(
 
 def integrator(user: User = Depends(current_user)) -> User:
     if not user.is_integrator:
-        raise HTTPException(403, "Réservé à l'intégrateur")
+        raise HTTPException(403, "Réservé à l'installateur")
     return user
 
 

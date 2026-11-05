@@ -10,7 +10,7 @@ H = {"X-CamSup": "1"}
 
 @pytest.fixture()
 def env():
-    """Base neuve : 2 pharmacies, 1 caméra chacune, 1 intégrateur, 1 pharmacien rattaché au site A."""
+    """Base neuve : 2 pharmacies, 1 caméra chacune, 1 installateur, 1 pharmacien rattaché au site A."""
     db.init()
     for t in ("audit", "sessions", "user_sites", "users", "alerts", "cameras", "sites"):
         db.x(f"DELETE FROM {t}")
@@ -110,7 +110,7 @@ def test_journal_cloisonne(env):
     assert r.status_code == 200
     assert db.one("SELECT password_enc FROM cameras WHERE id=?", (r.json()["id"],))["password_enc"] != "secret-nvr"
     db.x("INSERT INTO audit(ts,username,site_id,action) VALUES(1,'x',?,'site.modifie')", (env["a"],))
-    # le pharmacien ne voit que le journal de ses sites, l'intégrateur voit tout
+    # le pharmacien ne voit que le journal de ses sites, l'installateur voit tout
     rows = client("pharma", "motdepasse-pharma").get("/api/audit").json()
     assert rows and all(r["site_id"] == env["a"] for r in rows)
     assert any(r["site_id"] == env["b"] for r in admin.get("/api/audit").json())

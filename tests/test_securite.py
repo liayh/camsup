@@ -446,7 +446,7 @@ def test_alertes_retablies_effacees_apres_une_semaine(env):
 
 
 def test_role_integrateur_reserve_a_l_installateur(env):
-    """Aucun compte créé ensuite ne peut être intégrateur ; un pharmacien ne peut pas le devenir."""
+    """Aucun compte créé ensuite ne peut être installateur ; un pharmacien ne peut pas le devenir."""
     from app import config, security
     c = client(config.ADMIN_USER, security.ADMIN_PASSWORD)
     r = c.post("/api/users", json={"username": "employe", "role": "integrator", "password": "un-mot-de-passe-long"}, headers=H)

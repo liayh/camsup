@@ -262,7 +262,7 @@ def _poll(key: tuple, cams: list[dict]) -> None:
     except Exception as e:  # noqa: BLE001
         log.warning("NVR %s : %s", host, security.scrub(str(e))[:300])
         entry = evaluate(host, cams, None, reason(e))
-        # détail technique (sans mot de passe), affiché à l'intégrateur : « réponse inattendue » seul ne dit pas pourquoi
+        # détail technique (sans mot de passe), affiché à l'installateur : « réponse inattendue » seul ne dit pas pourquoi
         entry["detail"] = f"{type(e).__name__} : {security.scrub(str(e))[:200]}"
     with _lock:
         _state[host] = entry

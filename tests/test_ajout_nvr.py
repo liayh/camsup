@@ -115,7 +115,7 @@ def test_identifiants_refuses_rien_ne_change(env, monkeypatch):
 
 
 def test_export_configuration_nvr(env, monkeypatch):
-    """Sauvegarde de la configuration du NVR : intégrateur seulement, téléchargée, journalisée, date retenue."""
+    """Sauvegarde de la configuration du NVR : installateur seulement, téléchargée, journalisée, date retenue."""
     cam = db.one("SELECT * FROM cameras WHERE id=?", (env["cam_a"],))
     db.x("UPDATE cameras SET brand='dahua' WHERE id=?", (cam["id"],))
     asked = []

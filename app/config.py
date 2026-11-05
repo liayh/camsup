@@ -70,7 +70,7 @@ if FROZEN:
 
 
 def forget_admin_password() -> None:
-    """Après la création du compte intégrateur : efface le mot de passe saisi à l'installation (`INSTALL_FILE`) et
+    """Après la création du compte installateur : efface le mot de passe saisi à l'installation (`INSTALL_FILE`) et
     retire ADMIN_PASSWORD du fichier de réglages (installations d'avant la 1.1)."""
     INSTALL_FILE.unlink(missing_ok=True)
     if ENV_FILE.is_file():
@@ -118,7 +118,7 @@ _BUNDLED_FFMPEG = APP_DIR / "ffmpeg.exe"
 FFMPEG = str(_BUNDLED_FFMPEG) if FROZEN else os.getenv("FFMPEG", str(_BUNDLED_FFMPEG) if _BUNDLED_FFMPEG.is_file() else "ffmpeg")
 
 # Accès web
-ADMIN_USER = os.getenv("ADMIN_USER", "admin")       # compte intégrateur créé au premier démarrage (base vide)
+ADMIN_USER = os.getenv("ADMIN_USER", "admin")       # compte installateur créé au premier démarrage (base vide)
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")  # vide => généré et affiché au démarrage
 HOST = "127.0.0.1" if FROZEN else os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))

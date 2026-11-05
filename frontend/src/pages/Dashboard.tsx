@@ -86,7 +86,7 @@ function DiskAside({ recorders, admin }: { recorders: RecorderHealth[]; admin: b
 /** Tableau de bord (maquette « Option B — Mur de caméras ») : état du site, mur des caméras, alertes, disques. */
 export default function Dashboard() {
   const { ov: d, error, loading, reload, name, site, cams: all, alerts, recorders, nvr } = useCurrent();
-  const ca = useCamAdmin();                    // gestion des NVR et caméras (intégrateur), ex-page « NVR et disques »
+  const ca = useCamAdmin();                    // gestion des NVR et caméras (installateur), ex-page « NVR et disques »
   const [zoom, setZoom] = useState<Camera | null>(null);
   if (loading && !d) return <Loading />;
   if (error && !d) return <ErrorState message={error} onRetry={reload} />;

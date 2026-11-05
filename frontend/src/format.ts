@@ -10,4 +10,4 @@ export function fmtDuration(s: number): string {
   return `${Math.floor(s / 86400)} j ${Math.round((s % 86400) / 3600)} h`;
 }
 export const ago = (ts?: number | null) => (ts ? fmtDuration(Math.max(0, Date.now() / 1000 - ts)) : "—");
-export const ROLE_LABEL: Record<string, string> = { integrator: "Intégrateur", pharmacist: "Pharmacien" };
+export const ROLE_LABEL: Record<string, string> = { integrator: "Installateur", pharmacist: "Pharmacien" };

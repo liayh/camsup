@@ -142,7 +142,7 @@ function NvrWizard({ sites, current, existing, onDone }: { sites: Site[]; curren
 
 const CONN: Record<string, string> = { Connected: "connectée", NoVideo: "plus d’images", Unconnect: "déconnectée", Empty: "canal vide" };
 
-/** Gestion des enregistreurs et des caméras (intégrateur), affichée sur le tableau de bord : boutons de la barre,
+/** Gestion des enregistreurs et des caméras (installateur), affichée sur le tableau de bord : boutons de la barre,
  *  boutons de chaque tuile de caméra et du NVR, et les fenêtres (assistant d'ajout, identifiants, modification). */
 export function useCamAdmin() {
   const cur = useCurrent();

@@ -133,7 +133,7 @@ def test_serveur_trouve_d_apres_l_adresse(env, smtp, monkeypatch):
 def test_reglages_livres_avec_l_installateur(env, smtp, monkeypatch, tmp_path):
     preset = tmp_path / "camsup-email.env"
     monkeypatch.setattr(mail, "PRESET", preset)
-    preset.write_text("﻿# réglages de l'intégrateur\nSMTP_USER=alertes@free.fr\nSMTP_PASSWORD=secret-envoi\n"
+    preset.write_text("﻿# réglages de l'installateur\nSMTP_USER=alertes@free.fr\nSMTP_PASSWORD=secret-envoi\n"
                       "ALERT_EMAIL_TO=installateur@exemple.fr\n", encoding="utf-8")
     assert mail.import_preset() is True
     assert not preset.exists()                                   # mot de passe en clair effacé

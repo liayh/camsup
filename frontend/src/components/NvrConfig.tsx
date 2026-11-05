@@ -5,7 +5,7 @@ import { Badge, Modal } from "./ui";
 import { useSite } from "./SiteContext";
 import { useToast } from "./Toast";
 
-/** Sauvegarde de la configuration d'un NVR (intégrateur) : fichier téléchargé, pour le réinstaller à l'identique. */
+/** Sauvegarde de la configuration d'un NVR (installateur) : fichier téléchargé, pour le réinstaller à l'identique. */
 export function NvrConfig({ host, site }: { host: string; site: string }) {
   const { ov, reload } = useSite();
   const toast = useToast();
@@ -57,7 +57,7 @@ export function diskOverall(d: { etat: string; smart: { etat: string }[] }): "bo
   return d.smart.some((x) => x.etat === "surveiller") ? "surveiller" : "bon";
 }
 
-/** Diagnostic des disques (intégrateur) : fenêtre en clair, fichier technique à télécharger pour correction. */
+/** Diagnostic des disques (installateur) : fenêtre en clair, fichier technique à télécharger pour correction. */
 export function DiskDiagnostic({ host }: { host: string }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);

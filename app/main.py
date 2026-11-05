@@ -35,7 +35,7 @@ async def lifespan(_: FastAPI):
     fenetre.ensure_key()
     export.recover()
     preview.purge(everything=True)
-    # compte intégrateur : créé depuis ADMIN_PASSWORD s'il est fourni (installation silencieuse /MOTDEPASSE=, .env) ;
+    # compte installateur : créé depuis ADMIN_PASSWORD s'il est fourni (installation silencieuse /MOTDEPASSE=, .env) ;
     # sinon c'est l'utilisateur qui crée le sien à la première ouverture de l'interface (`/api/setup`)
     if config.ADMIN_PASSWORD:
         accounts.bootstrap(config.ADMIN_PASSWORD)
@@ -179,7 +179,7 @@ def setup_state():
 
 @public.post("/setup")
 def setup(body: SetupIn, request: Request, response: Response):
-    """Création du premier compte (intégrateur) par l'utilisateur lui-même : seulement tant qu'aucun compte n'existe,
+    """Création du premier compte (installateur) par l'utilisateur lui-même : seulement tant qu'aucun compte n'existe,
     et seulement depuis ce PC (personne d'autre sur le réseau ne peut le faire à sa place)."""
     if request.headers.get("X-CamSup") != "1":
         raise HTTPException(403, "En-tête X-CamSup manquant")
@@ -238,7 +238,7 @@ def change_password(body: PasswordIn, request: Request, user: User = Me):
     return {"ok": True}
 
 
-# ------------------------------------------------------------------ comptes (intégrateur)
+# ------------------------------------------------------------------ comptes (installateur)
 class UserIn(BaseModel):
     username: str = Field(min_length=2, max_length=80, pattern=r"^[A-Za-z0-9_.@-]+$")
     role: Literal["integrator", "pharmacist"]
@@ -266,9 +266,9 @@ def list_users():
 @admin.post("/users")
 def create_user(u: UserIn, request: Request):
     if u.role == "integrator":
-        # 05/11/2026 : le rôle intégrateur est réservé à l'installateur (compte créé à l'installation) ; les comptes
+        # 05/11/2026 : le rôle installateur est réservé à l'installateur (compte créé à l'installation) ; les comptes
         # créés ensuite (pharmaciens, employés) ne peuvent jamais l'avoir
-        raise HTTPException(403, "Le rôle intégrateur est réservé à l'installateur : créez un compte pharmacien")
+        raise HTTPException(403, "Le rôle installateur est réservé au compte créé à l'installation : créez un compte pharmacien")
     if not u.password:
         raise HTTPException(400, "Mot de passe requis")
     accounts.check_password_strength(u.password)
@@ -288,7 +288,7 @@ def update_user(uid: int, u: UserIn, request: Request):
     if not target:
         raise HTTPException(404, "Compte introuvable")
     if u.role == "integrator" and target["role"] != "integrator":
-        raise HTTPException(403, "Le rôle intégrateur est réservé à l'installateur : un pharmacien ne peut pas le recevoir")
+        raise HTTPException(403, "Le rôle installateur est réservé au compte créé à l'installation : un pharmacien ne peut pas le recevoir")
     if uid == me_.id and (u.role != "integrator" or not u.active):
         raise HTTPException(400, "Vous ne pouvez pas retirer vos propres droits")
     if db.one("SELECT id FROM users WHERE username=? AND id<>?", (u.username, uid)):
@@ -323,7 +323,7 @@ def delete_user(uid: int, request: Request):
 @router.get("/audit")
 def list_audit(user: User = Me, site_id: Optional[int] = None, action: str = "", from_ts: int = 0,
                to_ts: int = 4102444800, limit: int = Query(300, ge=1, le=2000)):
-    """Intégrateur : tout le journal. Pharmacien : uniquement les lignes de ses sites."""
+    """Installateur : tout le journal. Pharmacien : uniquement les lignes de ses sites."""
     sql = "SELECT a.*, s.name AS site FROM audit a LEFT JOIN sites s ON s.id=a.site_id WHERE a.ts>=? AND a.ts<=?"
     args: list = [from_ts, to_ts]
     frag, fargs = accounts.site_filter(user, "a.site_id")
@@ -392,7 +392,7 @@ def delete_site(sid: int, request: Request):
     return {"ok": True}
 
 
-# ------------------------------------------------------------------ caméras (intégrateur)
+# ------------------------------------------------------------------ caméras (installateur)
 def _cam_values(c: CameraIn) -> list:
     return [c.site_id, c.name, c.brand, c.host.strip(), c.port_http, c.username, c.channel, int(c.enabled)]
 
@@ -518,7 +518,7 @@ def rescan_nvr(body: NvrHost, request: Request):
 @admin.get("/nvr/config")
 def nvr_config(host: str, request: Request):
     """Configuration complète du NVR, pour le réinstaller à l'identique. Contient les identifiants des caméras IP :
-    réservé à l'intégrateur, téléchargée directement (rien n'est gardé sur le PC), journalisée."""
+    réservé à l'installateur, téléchargée directement (rien n'est gardé sur le PC), journalisée."""
     c = _nvr_cams(request.state.user, host)[0]
     try:
         data = nvrwatch.config_backup(c["host"], c["port_http"], c["username"], security.decrypt(c["password_enc"]))
@@ -773,7 +773,7 @@ def create_preview(body: PreviewIn, request: Request, user: User = Me):
 
 @admin.get("/nvr/disks/diagnostic")
 def nvr_disks_diagnostic(host: str, request: Request, fichier: bool = False):
-    """Diagnostic des disques (intégrateur) : résumé lisible (fenêtre de l'interface) et, avec `fichier=1`, les
+    """Diagnostic des disques (installateur) : résumé lisible (fenêtre de l'interface) et, avec `fichier=1`, les
     réponses brutes du NVR en fichier, à envoyer pour corriger une lecture fausse."""
     c = _nvr_cams(request.state.user, host)[0]
     data = storage.diagnostic(c["host"], c["port_http"], c["username"], security.decrypt(c["password_enc"]))
@@ -850,7 +850,7 @@ def preview_video(key: str, user: User = Me):
 
 # ------------------------------------------------------------------ alertes
 def _alerts(user: User, include_closed: bool, limit: int, site_id: Optional[int] = None) -> list[dict]:
-    """Alertes visibles : celles des caméras de ses sites ; les alertes sans caméra pour l'intégrateur."""
+    """Alertes visibles : celles des caméras de ses sites ; les alertes sans caméra pour l'installateur."""
     where = "WHERE 1=1" + ("" if include_closed else " AND a.closed_ts IS NULL")
     args: tuple = ()
     if not user.is_integrator:
@@ -871,7 +871,7 @@ def list_alerts(user: User = Me, include_closed: bool = False, limit: int = Quer
     return _alerts(user, include_closed, limit, site_id)
 
 
-# ------------------------------------------------------------------ e-mail à l'installateur (intégrateur)
+# ------------------------------------------------------------------ e-mail à l'installateur
 class EmailIn(BaseModel):
     host: str = Field("", max_length=200)                   # vide = déduit de l'adresse du compte (`mail.detect`)
     port: int = Field(587, ge=1, le=65535)

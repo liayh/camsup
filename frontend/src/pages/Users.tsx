@@ -24,8 +24,8 @@ function UserForm({ user, sites, onDone }: { user: UserRow | null; sites: Site[]
   return (
     <form className="form grid-form" onSubmit={submit}>
       <label>Utilisateur<input name="username" required pattern="[A-Za-z0-9_.@\-]+" defaultValue={user?.username} autoComplete="off" /></label>
-      {/* rôle intégrateur réservé à l'installateur (compte créé à l'installation) : jamais attribuable ici */}
-      <label>Rôle<input readOnly tabIndex={-1} value={role === "integrator" ? "Intégrateur (installateur : tout, configuration)"
+      {/* rôle installateur réservé au compte créé (compte créé à l'installation) : jamais attribuable ici */}
+      <label>Rôle<input readOnly tabIndex={-1} value={role === "integrator" ? "Installateur (tout, configuration)"
         : "Pharmacien (ses sites, consultation)"} /></label>
       <label>Mot de passe<input name="password" type="password" minLength={10} autoComplete="new-password" placeholder={user ? "inchangé si vide" : "10 caractères minimum"} /></label>
       <label className="check"><input type="checkbox" name="active" defaultChecked={user ? !!user.active : true} /> Compte actif</label>
@@ -36,7 +36,7 @@ function UserForm({ user, sites, onDone }: { user: UserRow | null; sites: Site[]
   );
 }
 
-/** Comptes et droits : section de Paramètres, réservée à l'intégrateur. */
+/** Comptes et droits : section de Paramètres, réservée à l'installateur. */
 export default function Users() {
   const { me } = useAuth();
   const users = useApi<UserRow[]>("/users");

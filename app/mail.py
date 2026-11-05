@@ -5,7 +5,7 @@ réglage enregistré, repli sur les variables `SMTP_*` / `ALERT_EMAIL_TO` du fic
 L'envoi des alertes se fait en arrière-plan (un serveur d'e-mail lent ne doit pas bloquer la surveillance) ; le
 résultat du dernier envoi est gardé (clé `email_status`) et affiché dans Paramètres.
 Personne n'a à connaître le serveur d'envoi : il est déduit de l'adresse du compte (`detect`), et l'installateur Windows
-peut apporter les réglages de l'intégrateur (`PRESET`, importé au premier démarrage puis effacé).
+peut apporter les réglages de l'installateur (`PRESET`, importé au premier démarrage puis effacé).
 """
 import json
 import logging
@@ -22,7 +22,7 @@ from . import config, db, security
 log = logging.getLogger("mail")
 EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
 _pool = ThreadPoolExecutor(max_workers=1)
-# déposé par l'installateur (réglages e-mail de l'intégrateur, mot de passe en clair jusqu'au premier démarrage) :
+# déposé par l'installateur (réglages e-mail de l'installateur, mot de passe en clair jusqu'au premier démarrage) :
 # dans data\, réservé au système et aux administrateurs (la racine %PROGRAMDATA%\CamSup est lisible par tous)
 PRESET = config.DATA_DIR / "camsup-email.env"
 

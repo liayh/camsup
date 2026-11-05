@@ -54,7 +54,7 @@ def main() -> None:
         print(f"Compte « {name} » créé : connectez-vous dans CamSup.")
         return
     for r in rows:
-        print(f"  {r['username']}  ({'intégrateur' if r['role'] == 'integrator' else 'pharmacien'})")
+        print(f"  {r['username']}  ({'installateur' if r['role'] == 'integrator' else 'pharmacien'})")
     name = input("Compte à réinitialiser : ").strip()
     pw = getpass.getpass("Nouveau mot de passe (10 caractères minimum) : ")
     if pw != getpass.getpass("Confirmation : "):
