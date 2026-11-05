@@ -15,6 +15,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlsplit
 
 from requests.auth import HTTPBasicAuth
 
@@ -30,7 +31,7 @@ def device_get(url: str, user: str, pw: str, raw: bool = False, timeout: int = 1
     """GET authentifié (Digest). `basic=True` (Hikvision anciens) : repli sur l'authentification Basic, qui envoie le
     mot de passe tel quel, seulement si la réponse vient en HTTPS ; jamais en HTTP clair."""
     # verify=False : les enregistreurs ont un certificat auto-signé (Dahua redirige le CGI de stockage vers HTTPS)
-    r = devicehttp.request("GET", url, auth=devicehttp.digest(user, pw), timeout=timeout)   # repli HTTPS si besoin
+    r = devicehttp.request("GET", url, auth=devicehttp.digest(user, pw, urlsplit(url).hostname or ""), timeout=timeout)   # repli HTTPS si besoin
     if r.status_code == 401 and basic and r.url.startswith("https://"):
         r = devicehttp.request("GET", r.url, auth=HTTPBasicAuth(user, pw), timeout=timeout)
     if r.status_code == 401:
@@ -43,6 +44,18 @@ def device_get(url: str, user: str, pw: str, raw: bool = False, timeout: int = 1
 _SMART_COUNTERS = {5: "secteurs réalloués", 197: "secteurs en attente", 198: "secteurs illisibles",
                    199: "erreurs CRC (câble SATA)"}
 TEMP_WARN = 50
+
+
+def _int(v) -> int:
+    """Valeur numérique d'un champ SMART renvoyé par le NVR (texte, None, booléen… → 0 si illisible)."""
+    if isinstance(v, bool):
+        return int(v)
+    if isinstance(v, (int, float)):
+        return int(v) if abs(v) < 2 ** 63 else 0
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        return 0
 
 
 def _health(d: dict) -> dict:
@@ -101,8 +114,16 @@ def _hik(host: str, port: int, user: str, pw: str) -> list[dict]:
     return disks
 
 
+RAW_MAX = 2 ** 48 - 1          # une valeur brute SMART tient sur 6 octets : au-delà, réponse aberrante (ramenée à 0)
+
+
 def smart_raw(v) -> int:
     """Valeur brute SMART telle que renvoyée par les NVR : nombre, « 123 », « 123 (0 5 0) », « 0x00000000007B »."""
+    n = _smart_raw(v)
+    return n if 0 <= n <= RAW_MAX else 0
+
+
+def _smart_raw(v) -> int:
     if isinstance(v, bool):
         return int(v)
     if isinstance(v, (int, float)):
@@ -193,9 +214,9 @@ def _dahua_rpc(host: str, port: int, user: str, pw: str) -> list[dict]:
                     if not isinstance(v, dict):
                         continue
                     raw = smart_raw(v.get("Raw", 0))
-                    d["smart"].append({"id": v.get("ID"), "name": v.get("Name", ""), "current": v.get("Current", 0),
-                                       "worst": v.get("Worst", 0), "threshold": v.get("Threshold", 0),
-                                       "raw": raw, "predict": v.get("Predict", 0)})
+                    d["smart"].append({"id": v.get("ID"), "name": v.get("Name", ""), "current": _int(v.get("Current", 0)),
+                                       "worst": _int(v.get("Worst", 0)), "threshold": _int(v.get("Threshold", 0)),
+                                       "raw": raw, "predict": _int(v.get("Predict", 0))})
                     if v.get("ID") == 194:
                         d["temp"] = raw & 0xFF          # certains disques codent min/max dans les octets hauts
                     elif v.get("ID") == 9:
@@ -220,8 +241,9 @@ SMART_NAMES = {
 def diagnostic_summary(rpc: dict) -> dict:
     """Résumé lisible des réponses RPC2 brutes (`diagnostic`) : NVR, puis chaque disque avec taille, partitions et
     compteurs SMART nommés et jugés (bon / à surveiller / défaillant)."""
-    def val(x):
-        return (x or {}).get("params") if isinstance(x, dict) else None
+    def val(x):                                 # « params » d'une réponse RPC2, seulement si c'est un objet
+        p = x.get("params") if isinstance(x, dict) else None
+        return p if isinstance(p, dict) else None
     model = val(rpc.get("modele")) or {}
     version = val(rpc.get("version")) or {}
     out = {"modele": model.get("type", ""), "version": version.get("version", ""), "disques": []}
@@ -232,12 +254,15 @@ def diagnostic_summary(rpc: dict) -> dict:
         total = sum(to_bytes(x.get("Total")) for x in parts) or to_bytes(dev.get("Capacity"))
         free = sum(to_bytes(x.get("Remain")) for x in parts)
         smart = []
-        for v in ((val((rpc.get("smart") or {}).get(dev.get("Name"))) or {}).get("values") or []):
+        smart_all = rpc.get("smart") if isinstance(rpc.get("smart"), dict) else {}
+        values = val(smart_all.get(dev.get("Name")))
+        values = values.get("values") if isinstance(values, dict) else None
+        for v in (values if isinstance(values, list) else []):
             if not isinstance(v, dict):
                 continue
             ident, raw = v.get("ID"), smart_raw(v.get("Raw", 0))
             name, watch = SMART_NAMES.get(ident, (v.get("Name") or f"Attribut {ident}", False))
-            cur, thr = v.get("Current", 0), v.get("Threshold", 0)
+            cur, thr = _int(v.get("Current", 0)), _int(v.get("Threshold", 0))
             if thr and cur and cur <= thr:
                 state = "defaillant"
             elif v.get("Predict"):
@@ -248,7 +273,7 @@ def diagnostic_summary(rpc: dict) -> dict:
                 state = "bon"
             shown = (power_on_hours(raw) if ident == 9 else raw & 0xFF if ident in (190, 194) else raw)
             smart.append({"id": ident, "nom": name, "valeur": shown, "brut": v.get("Raw"), "actuel": cur,
-                          "pire": v.get("Worst", 0), "seuil": thr, "etat": state})
+                          "pire": _int(v.get("Worst", 0)), "seuil": thr, "etat": state})
         out["disques"].append({
             "nom": dev.get("Name", "?"), "modele": dev.get("Module", ""), "serie": dev.get("SerialNo", ""),
             "etat": dev.get("State", ""), "taille": total, "libre": free, "reel": phantom_ok(dev, total),

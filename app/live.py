@@ -69,6 +69,8 @@ class Stream:
         self.viewers = 0
         self.last_seen = time.time()
         self.lock = threading.Lock()
+        self._secrets = [x for x in (pw, quote(pw, safe="")) if x]
+        self._stderr: list[bytes] = []
         cmd = [config.FFMPEG, "-nostdin", "-loglevel", "error", *source_args(rtsp_url(cam, pw)), "-an",
                "-vf", f"fps={FPS},scale={WIDTH}:-2", "-q:v", "7", "-flush_packets", "1", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"]
         try:
@@ -78,6 +80,20 @@ class Stream:
             self.error = f"programme vidéo introuvable ({config.FFMPEG})"
             return
         threading.Thread(target=self._read, daemon=True, name=f"live-{self.cam_id}").start()
+        threading.Thread(target=self._read_err, daemon=True, name=f"live-err-{self.cam_id}").start()
+
+    def _read_err(self) -> None:
+        """Messages de ffmpeg lus au fil de l'eau (un tuyau plein bloquerait ffmpeg) ; seules les dernières lignes
+        sont gardées."""
+        for line in self.proc.stderr:
+            self._stderr = (self._stderr + [line[:500]])[-5:]
+
+    def _clean(self, text: str) -> str:
+        """Message affichable : identifiants d'URL masqués et mot de passe retiré sous toutes ses formes."""
+        text = security.scrub(text)
+        for s in self._secrets:
+            text = text.replace(s, "***")
+        return text
 
     def _read(self) -> None:
         buf = bytearray()
@@ -91,8 +107,12 @@ class Stream:
             for jpg in split_jpegs(buf):
                 with self.lock:
                     self.frame, self.seq = jpg, self.seq + 1
-        err = (self.proc.stderr.read() or b"").decode(errors="replace")
-        self.error = "flux interrompu" + (f" : {security.scrub(err.strip().splitlines()[-1])[:200]}" if err.strip() else "")
+        try:
+            self.proc.wait(5)
+        except subprocess.TimeoutExpired:
+            pass
+        err = b"".join(self._stderr).decode(errors="replace").strip()
+        self.error = "flux interrompu" + (f" : {self._clean(err.splitlines()[-1])[:200]}" if err else "")
         log.warning("Direct caméra %s : %s", self.cam_id, self.error)
 
     @property
@@ -142,19 +162,22 @@ def release(s: Stream) -> None:
 
 
 def reap() -> None:
-    """Arrête les flux sans spectateur depuis `IDLE_SECONDS` (appelé par la surveillance)."""
+    """Arrête les flux sans spectateur depuis `IDLE_SECONDS` (appelé par la surveillance). Les ffmpeg sont arrêtés
+    hors du verrou (jusqu'à 5 s chacun) : les autres caméras ne sont pas bloquées pendant ce temps."""
     with _lock:
-        for cid, s in list(_streams.items()):
-            if (s.viewers == 0 and time.time() - s.last_seen > IDLE_SECONDS) or not s.alive and s.viewers == 0:
-                s.stop()
-                _streams.pop(cid, None)
+        idle = [cid for cid, s in _streams.items()
+                if s.viewers == 0 and (time.time() - s.last_seen > IDLE_SECONDS or not s.alive)]
+        gone = [_streams.pop(cid) for cid in idle]
+    for s in gone:
+        s.stop()
 
 
 def stop_all() -> None:
     with _lock:
-        for s in _streams.values():
-            s.stop()
+        gone = list(_streams.values())
         _streams.clear()
+    for s in gone:
+        s.stop()
 
 
 async def mjpeg(s: Stream, max_seconds: float = 3600):

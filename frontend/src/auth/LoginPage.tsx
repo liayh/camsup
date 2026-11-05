@@ -8,7 +8,22 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [first, setFirst] = useState(false);
-  useEffect(() => { api<{ needed: boolean }>("/setup").then((r) => setFirst(r.needed)).catch(() => undefined); }, []);
+  const [tool, setTool] = useState(false);       // programme Windows : premier compte créé par l'outil du menu Démarrer
+  useEffect(() => {
+    api<{ needed: boolean; outil?: boolean }>("/setup")
+      .then((r) => { setFirst(r.needed); setTool(!!r.outil); }).catch(() => undefined);
+  }, []);
+  if (first && tool) return (
+    <div className="login">
+      <div className="card login-card">
+        <h1>CamSup</h1>
+        <p><b>Aucun compte n’existe encore.</b></p>
+        <p>Le compte installateur se crée sur ce PC, avec les droits d’administrateur de Windows : menu Démarrer ›
+          <b> CamSup — créer le compte installateur</b> (proposé aussi à la fin de l’installation).</p>
+        <button className="btn primary" onClick={() => window.location.reload()}>C’est fait : se connecter</button>
+      </div>
+    </div>
+  );
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

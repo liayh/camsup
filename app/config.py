@@ -18,7 +18,9 @@ SAFE_KEYS = {"CHECK_INTERVAL", "OFFLINE_ALERT_SECONDS", "HDD_CHECK_SECONDS", "CA
              "CAMERA_STALL_SECONDS", "NVR_FAILS", "NVR_BOOT_GRACE_SECONDS", "RECORD_STALE_MINUTES", "POPUPS",
              "POPUP_REMIND_HOURS", "EXPORT_MAX_MINUTES", "EXPORT_RETENTION_DAYS", "ADMIN_USER", "PORT",
              "SESSION_HOURS", "AUDIT_RETENTION_DAYS", "ALERT_RETENTION_DAYS", "WEBHOOK_URL", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_FROM",
-             "ALERT_EMAIL_TO", "ALERT_EMAIL_ALWAYS", "ALLOWED_HOSTS"}
+             "ALERT_EMAIL_TO", "ALLOWED_HOSTS"}
+# ALERT_EMAIL_ALWAYS n'en fait pas partie (pentest du 05/11/2026) : un compte du poste ne doit pas pouvoir détourner
+# les alertes ailleurs que vers camsupalerte@gmail.com
 
 
 def _load_env_file(path: Path, allowed: set[str] | None = None) -> None:
@@ -41,6 +43,10 @@ def _load_env_file(path: Path, allowed: set[str] | None = None) -> None:
 
 VERSION = "1.1.0"
 FROZEN = bool(getattr(sys, "frozen", False))
+# Premier compte depuis le navigateur : seulement en développement. Programme Windows (pentest du 05/11/2026) : tout
+# programme ou compte du poste peut joindre 127.0.0.1 ; le premier compte se crée donc avec les droits
+# d'administrateur du PC (`CamSup.exe --creer-compte`, lancé par l'installateur, `recovery.create`).
+SETUP_WEB = not FROZEN
 APP_DIR = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent.parent
 HOME = Path(os.getenv("PROGRAMDATA", "C:/ProgramData")) / "CamSup" if FROZEN else APP_DIR
 ENV_FILE = Path(os.getenv("CAMSUP_ENV", HOME / ("camsup.env" if FROZEN else ".env")))

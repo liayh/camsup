@@ -8,8 +8,9 @@ on:
     branches: [main, securite-durcissement]
   workflow_dispatch:
 
+# lecture seule par défaut : seul le job « publier » peut écrire, et seulement après une installation d'essai réussie
 permissions:
-  contents: write          # publier l'installateur (« derniere-version »)
+  contents: read
 
 jobs:
   windows:
@@ -17,6 +18,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false     # pas de jeton dans .git/config (pip, npm, PyInstaller… ne peuvent pas le lire)
 
       - uses: actions/setup-python@v5
         with:
@@ -38,16 +41,6 @@ jobs:
       - name: Fabrication (interface, Python et bibliothèques, ffmpeg, installateur)
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
-
-      - name: Publication du .exe (lien direct « derniere-version »)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete derniere-version --yes --cleanup-tag || true
-          gh release create derniere-version dist/CamSup-Installation-*.exe --prerelease --target "$GITHUB_SHA" \
-            --title "CamSup — dernière version (${GITHUB_REF_NAME}, ${GITHUB_SHA::7})" \
-            --notes "Installateur Windows fabriqué automatiquement. Double-clic, droits administrateur ; au premier lancement, créez votre compte."
 
       - name: Installation d'essai sur ce Windows (silencieuse)
         shell: powershell
@@ -78,3 +71,27 @@ jobs:
             dist/CamSup-Installation-*.exe
             install.log
           if-no-files-found: warn
+
+  publier:
+    needs: windows                       # seulement si fabrication ET installation d'essai ont réussi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write                    # publier l'installateur (« derniere-version »)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CamSup-Installation
+          path: dist
+
+      - name: Publication du .exe (lien direct « derniere-version ») et de son empreinte SHA-256
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd dist
+          sha256sum CamSup-Installation-*.exe > SHA256.txt
+          cat SHA256.txt
+          gh release delete derniere-version --yes --cleanup-tag || true
+          gh release create derniere-version CamSup-Installation-*.exe SHA256.txt --prerelease --target "$GITHUB_SHA" \
+            --title "CamSup — dernière version (${GITHUB_REF_NAME}, ${GITHUB_SHA::7})" \
+            --notes "Installateur Windows fabriqué automatiquement et installé à l'essai avant publication. Double-clic, droits administrateur ; à la fin, créez le compte installateur. Empreinte : SHA256.txt."

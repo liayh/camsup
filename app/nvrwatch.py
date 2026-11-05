@@ -69,6 +69,7 @@ def _files(s: dahuarpc.Session, channel: int, start: datetime, end: datetime) ->
         s.call("mediaFileFind.destroy", None, obj)
 
 
+FUTURE_TOLERANCE = 5                         # s : fin d'enregistrement acceptée au-delà de l'heure du NVR
 SEARCH_MARGIN = timedelta(minutes=10)       # recherche à partir de la dernière fin connue moins cette marge
 _known_end: dict[tuple[str, int], datetime] = {}    # (hôte, canal) → fin du dernier enregistrement vue (heure du NVR)
 _clock: dict[str, tuple[float, float]] = {}         # hôte → (avance de l'horloge du NVR en s, instant du relevé)
@@ -80,11 +81,24 @@ def _last_record(s: dahuarpc.Session, channel: int, nvr_now: datetime, since: da
     `since` : dernière fin déjà connue ; on ne cherche alors que depuis peu avant (quelques fichiers au lieu de la
     liste des 24 h, à chaque relevé et pour chaque caméra). Rien trouvé dans cette fenêtre : recherche complète."""
     day_ago = nvr_now - timedelta(hours=24)
+    # fin dans le futur (NVR piégé ou fichier corrompu) : ignorée, sinon une caméra arrêtée paraîtrait à jour
+    limit = (nvr_now + timedelta(seconds=FUTURE_TOLERANCE)).strftime(FMT)
     if since is not None and day_ago < since - SEARCH_MARGIN <= nvr_now:
-        found = max((b for _, b in _files(s, channel, since - SEARCH_MARGIN, nvr_now)), default=None)
+        found = max((b for _, b in _files(s, channel, since - SEARCH_MARGIN, nvr_now) if _valid_end(b, limit)), default=None)
         if found is not None:
             return found
-    return max((b for _, b in _files(s, channel, day_ago, nvr_now)), default=None)
+    return max((b for _, b in _files(s, channel, day_ago, nvr_now) if _valid_end(b, limit)), default=None)
+
+
+def _valid_end(b, limit: str) -> bool:
+    """Fin de fichier au format du NVR et pas après son heure actuelle (+ `FUTURE_TOLERANCE`)."""
+    if not isinstance(b, str):
+        return False
+    try:
+        datetime.strptime(b, FMT)
+    except ValueError:
+        return False
+    return b <= limit
 
 
 def clock_offset(host: str, max_age: float = 60) -> int | None:
@@ -161,7 +175,7 @@ def config_backup(host: str, port: int, user: str, pw: str) -> bytes:
     """Fichier de configuration complet du NVR (celui de « Sauvegarde de la configuration » de son interface) :
     JSON d'environ 1 Mo, vérifié le 31/10/2026 sur DHI-NVR5216-16P-4KS2E. Contient les identifiants des caméras IP."""
     with devicehttp.request("GET", f"http://{host}:{port}/cgi-bin/Config.backup?action=All",
-                            auth=devicehttp.digest(user, pw), timeout=(10, 60), stream=True) as r:
+                            auth=devicehttp.digest(user, pw, host), timeout=(10, 60), stream=True) as r:
         if r.status_code == 401:
             raise RuntimeError("Authentification refusée (configuration)")
         r.raise_for_status()

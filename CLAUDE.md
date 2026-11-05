@@ -86,7 +86,7 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   = logique de rappel (4 h, ou nouveau problème). Heartbeat muet 5 min → « surveillance arrêtée » ; `"arret"` écrit
   à l'arrêt normal → la fenêtre se ferme (uvicorn tue le processus après SIGTERM : le `finally` de `run.main` ne s'exécute pas).
   Essai sans écran : `xvfb-run` + capture `ffmpeg -f x11grab`.
-- Premier compte (03/11/2026) : sans `ADMIN_PASSWORD`, aucun compte n'est créé ; l'interface affiche « Créez votre compte » (`GET/POST /api/setup`, depuis 127.0.0.1 seulement, tant qu'aucun compte n'existe, insertion conditionnelle) → intégrateur connecté aussitôt. L'installateur ne demande plus de mot de passe (`/MOTDEPASSE=` reste possible en silencieux).
+- Premier compte (03/11/2026) : sans `ADMIN_PASSWORD`, aucun compte n'est créé ; en dev l'interface affiche « Créez votre compte » (`GET/POST /api/setup`, depuis 127.0.0.1 seulement, tant qu'aucun compte n'existe, insertion conditionnelle) → intégrateur connecté aussitôt. **Programme Windows (05/11/2026, pentest)** : `config.SETUP_WEB=False` → `POST /api/setup` refusé (tout programme du poste joint 127.0.0.1) ; le premier compte se crée avec les droits d'administrateur du PC : `CamSup.exe --creer-compte` (lancé en fin d'installation, `runascurrentuser`, et menu Démarrer « CamSup — créer le compte installateur » ; `recovery.create`). L'installateur ne demande plus de mot de passe (`/MOTDEPASSE=` reste possible en silencieux).
 - Fabrication sur un vrai Windows : `.github/workflows/windows.yml` (GitHub Actions : tests, `build.ps1`, installation silencieuse d'essai, `/api/health`, droits, journaux ; installateur en « Artifacts »).
 - Retour du test chez un client (03/11/2026) : mot de passe oublié → `app/recovery.py` (`python -m app.recovery` ;
   Windows : menu Démarrer « CamSup — mot de passe oublié » = `CamSup.exe --mot-de-passe-oublie`, élévation UAC : être
@@ -181,7 +181,26 @@ PowerShell manquent (l'installateur affichera l'échec de `installer-tache.ps1`)
   verrou court (60 s) et sans verrou par adresse depuis 127.0.0.1 ; une ligne d'audit par verrouillage ; essais du
   mot de passe actuel limités ; `mot-de-passe-admin.txt` effacé au changement de mot de passe.
 
+## Pentest du 05/11/2026 (3 relectures : web, Windows, NVR malveillant) : corrigé
+- Premier compte réservé aux administrateurs du PC (voir plus haut) ; cookie de session sans `max_age` (effacé à la
+  fermeture de la fenêtre) ; `run.genuine()` : la fenêtre CamSup ne s'ouvre que sur le vrai serveur (réponse signée
+  `/api/fenetre`) ; navigateur cherché dans Program Files seulement, `--disable-extensions`.
+- GitHub Actions : `contents: read`, `persist-credentials: false`, publication dans un job séparé **après**
+  l'installation d'essai réussie, avec `SHA256.txt`.
+- WebSocket du direct : Origin obligatoire ; recherches synchrones auprès du NVR (`/recordings*`, `/nvr/discover|rescan`)
+  4 à la fois (`_nvr_slot`, 429) ; `CameraIn.username/password` bornés ; `ALERT_EMAIL_ALWAYS` retiré de `SAFE_KEYS`.
+- NVR piégé : fin d'enregistrement dans le futur ignorée (`nvrwatch._valid_end`, sinon caméra arrêtée vue « en
+  ligne ») ; SMART : valeurs converties (`storage._int`), brutes > 2^48 = 0, types vérifiés dans `diagnostic_summary` ;
+  Digest mis en cache par hôte ; direct : erreurs de ffmpeg lues au fil de l'eau (tuyau plein), mot de passe retiré
+  des messages (`Stream._clean`), ffmpeg arrêtés hors du verrou ; LISEZ-MOI : l'heure incrustée fait foi.
+
 ## Audit : reste ouvert (non corrigé)
+- Direct : mot de passe du NVR dans la ligne de commande de ffmpeg (lisible par les administrateurs et les journaux
+  de création de processus ; sous SYSTEM, pas par un compte standard : à vérifier) ; ffmpeg accepterait une
+  authentification Basic RTSP d'un faux NVR. Compte NVR en lecture seule recommandé.
+- Direct : 16 ffmpeg au plus pour tout le poste (pas par pharmacie). `/api/fenetre` lisible par tout compte local
+  (messages d'alerte). « Mot de passe oublié » : un employé administrateur du PC peut réinitialiser l'installateur.
+- Actions GitHub citées par version, pas par SHA ; Inno Setup (choco) sans version figée.
 - Serveur sous SYSTEM : LOCAL SERVICE réduirait l'impact d'une faille de ffmpeg (droits à revoir, non essayé).
 - Mise à jour avec plusieurs sessions ouvertes : la fenêtre d'alerte des autres sessions n'est relancée qu'à leur
   prochaine ouverture de session.

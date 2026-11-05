@@ -24,10 +24,10 @@ _lock = threading.Lock()
 _auths: dict[tuple, HTTPDigestAuth] = {}
 
 
-def digest(user: str, pw: str) -> HTTPDigestAuth:
+def digest(user: str, pw: str, host: str = "") -> HTTPDigestAuth:
     """Authentification Digest gardée par compte : après le premier défi du NVR, les requêtes suivantes partent
     directement avec la réponse (sinon chaque requête est d'abord refusée en 401 puis renvoyée : deux allers-retours)."""
-    key = (user, hashlib.sha256(pw.encode()).hexdigest())
+    key = (host, user, hashlib.sha256(pw.encode()).hexdigest())     # par appareil : défi jamais réutilisé ailleurs
     with _lock:
         auth = _auths.get(key)
         if auth is None:

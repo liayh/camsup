@@ -121,10 +121,31 @@ def server_running() -> bool:
         return s.connect_ex((host, config.PORT)) == 0
 
 
+def genuine() -> bool:
+    """Le programme qui répond sur le port est-il le vrai serveur CamSup (réponse signée sur un défi neuf, comme pour
+    la fenêtre d'alerte) ? Programme Windows seulement : pendant une relance, un autre programme du poste pourrait
+    écouter sur ce port et présenter une fausse page de connexion."""
+    if not config.FROZEN:
+        return True
+    import requests
+    from . import fenetre
+    challenge = fenetre.new_challenge()
+    try:
+        with requests.Session() as s:
+            s.trust_env = False
+            r = s.get(f"{'https' if config.HTTPS else 'http'}://127.0.0.1:{config.PORT}/api/fenetre",
+                      params={"defi": challenge}, timeout=5, verify=False)
+        fenetre.verify(r.json(), challenge)
+        return True
+    except (requests.RequestException, ValueError) as e:
+        log.warning("Serveur sur le port %s non reconnu : %s", config.PORT, e)
+        return False
+
+
 def open_interface(wait: float = 0) -> bool:
     """Ouvre l'interface dans le navigateur si le serveur répond (attendu jusqu'à `wait` s, juste après l'installation)."""
     end = time.time() + wait
-    while not server_running():
+    while not (server_running() and genuine()):
         if time.time() >= end:
             return False
         time.sleep(1)
@@ -141,7 +162,9 @@ def app_browser() -> str | None:
     tout Windows 10/11, sinon Chrome / Chromium."""
     import shutil
     if os.name == "nt":
-        for base in (os.getenv("ProgramFiles(x86)"), os.getenv("ProgramFiles"), os.getenv("LOCALAPPDATA")):
+        # Program Files seulement (modifiable par les administrateurs) : pas %LOCALAPPDATA%, où un programme de la
+        # session pourrait poser un faux navigateur
+        for base in (os.getenv("ProgramFiles(x86)"), os.getenv("ProgramFiles")):
             for rel in (r"Microsoft\Edge\Application\msedge.exe", r"Google\Chrome\Application\chrome.exe"):
                 if base and Path(base, rel).is_file():
                     return str(Path(base, rel))
@@ -163,7 +186,8 @@ def app_window(url: str) -> bool:
     try:
         profile.mkdir(parents=True, exist_ok=True)
         subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={profile}", "--window-size=1440,900",
-                          "--no-first-run", "--no-default-browser-check", "--disable-features=Translate"],
+                          "--no-first-run", "--no-default-browser-check", "--disable-features=Translate",
+                          "--disable-extensions"],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=os.name != "nt")
     except OSError as e:

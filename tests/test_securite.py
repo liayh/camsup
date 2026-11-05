@@ -280,6 +280,29 @@ def test_premier_compte_cree_par_l_utilisateur(monkeypatch):
     assert db.one("SELECT COUNT(*) n FROM users")["n"] == 1
 
 
+def test_premier_compte_windows_par_outil_administrateur(monkeypatch):
+    """Programme Windows : tout programme du poste joint 127.0.0.1 → pas de création depuis le navigateur ; le premier
+    compte se crée avec les droits d'administrateur du PC (`recovery.create`)."""
+    from fastapi.testclient import TestClient
+    from app import config, main, recovery
+    from app.main import app
+    db.init()
+    for t in ("audit", "sessions", "user_sites", "users"):
+        db.x(f"DELETE FROM {t}")
+    monkeypatch.setattr(config, "SETUP_WEB", False)
+    monkeypatch.setattr(main, "LOOPBACK", {"testclient"})
+    c = TestClient(app)
+    assert c.get("/api/setup").json() == {"needed": True, "outil": True}
+    body = {"username": "voleur", "password": "un-mot-de-passe-long"}
+    assert c.post("/api/setup", json=body, headers=H).status_code == 403
+    with pytest.raises(ValueError):
+        recovery.create("a b", "un-mot-de-passe-long")
+    recovery.create("installateur", "un-mot-de-passe-long")
+    assert db.one("SELECT role FROM users WHERE username='installateur'")["role"] == "integrator"
+    with pytest.raises(ValueError):
+        recovery.create("second", "un-mot-de-passe-long")
+
+
 def test_mot_de_passe_oublie_reinitialise_sur_le_pc(env):
     from app import recovery
     c = client("pharma", "motdepasse-pharma")
@@ -398,7 +421,11 @@ def test_direct_par_websocket(env, monkeypatch):
     with pytest.raises(WebSocketDisconnect):
         with c.websocket_connect("/api/live/ws", headers={"origin": "https://pirate.example"}) as ws:
             ws.receive_bytes()
-    with c.websocket_connect(f"/api/live/ws?ids={env['cam_a']},{env['cam_b']}") as ws:
+    with pytest.raises(WebSocketDisconnect):                 # sans Origin : refusé aussi
+        with c.websocket_connect(f"/api/live/ws?ids={env['cam_a']}") as ws:
+            ws.receive_bytes()
+    with c.websocket_connect(f"/api/live/ws?ids={env['cam_a']},{env['cam_b']}",
+                             headers={"origin": "http://testserver"}) as ws:
         got = ws.receive_bytes()
         assert int.from_bytes(got[:4], "big") == env["cam_a"] and got[4:6] == b"\xff\xd8"
         for _ in range(5):                                   # jamais la caméra de l'autre pharmacie

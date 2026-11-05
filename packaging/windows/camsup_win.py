@@ -39,14 +39,15 @@ def open_ui() -> None:
                          "continue, prévenez votre installateur.")
 
 
-def forgot_password() -> None:
-    """Fenêtre « mot de passe oublié », relancée avec les droits d'administrateur si besoin."""
+def forgot_password(arg: str = "--mot-de-passe-oublie") -> None:
+    """Fenêtre « mot de passe oublié », relancée avec les droits d'administrateur si besoin. Sans aucun compte :
+    création du premier compte (installateur), réservée elle aussi aux administrateurs du PC."""
     import ctypes
     import tkinter as tk
     from tkinter import messagebox, ttk
     if not ctypes.windll.shell32.IsUserAnAdmin():
-        # demande de droits (UAC) : c'est elle qui autorise la réinitialisation
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, "--mot-de-passe-oublie", None, 1)
+        # demande de droits (UAC) : c'est elle qui autorise la réinitialisation ou la création
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, arg, None, 1)
         return
     from app import recovery
     root = tk.Tk()
@@ -58,7 +59,11 @@ def forgot_password() -> None:
         messagebox.showerror("CamSup", f"Base de CamSup illisible : {e}")
         return
     if not rows:
-        messagebox.showinfo("CamSup", "Aucun compte : ouvrez CamSup pour créer le vôtre.")
+        create_account(root)
+        return
+    if arg == "--creer-compte":
+        root.withdraw()
+        messagebox.showinfo("CamSup", "Le compte installateur existe déjà : connectez-vous dans CamSup.")
         return
     f = ttk.Frame(root, padding=16)
     f.pack()
@@ -89,6 +94,41 @@ def forgot_password() -> None:
     root.mainloop()
 
 
+def create_account(root) -> None:
+    """Premier compte (installateur) : nom + mot de passe, en administrateur du PC (lancé par l'installateur)."""
+    from tkinter import messagebox, ttk
+    from app import recovery
+    root.title("CamSup — créer le compte installateur")
+    f = ttk.Frame(root, padding=16)
+    f.pack()
+    ttk.Label(f, text="Ce compte sert à régler CamSup et à créer les comptes des pharmaciens.").grid(
+        row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+    ttk.Label(f, text="Nom d'utilisateur").grid(row=1, column=0, sticky="w", pady=4)
+    name = ttk.Entry(f, width=32)
+    name.grid(row=1, column=1, pady=4)
+    ttk.Label(f, text="Mot de passe (10 caractères min.)").grid(row=2, column=0, sticky="w", pady=4)
+    p1 = ttk.Entry(f, show="•", width=32)
+    p1.grid(row=2, column=1, pady=4)
+    ttk.Label(f, text="Confirmation").grid(row=3, column=0, sticky="w", pady=4)
+    p2 = ttk.Entry(f, show="•", width=32)
+    p2.grid(row=3, column=1, pady=4)
+
+    def ok() -> None:
+        if p1.get() != p2.get():
+            messagebox.showerror("CamSup", "Les deux mots de passe sont différents")
+            return
+        try:
+            recovery.create(name.get().strip(), p1.get())
+        except ValueError as e:
+            messagebox.showerror("CamSup", str(e))
+            return
+        messagebox.showinfo("CamSup", f"Compte « {name.get().strip()} » créé : connectez-vous dans CamSup.")
+        root.destroy()
+
+    ttk.Button(f, text="Créer le compte", command=ok).grid(row=4, column=1, sticky="e", pady=(12, 0))
+    root.mainloop()
+
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     arg = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -97,8 +137,8 @@ if __name__ == "__main__":
     elif arg == "--serveur-processus":
         from app import run
         run.main(popups=False, browser=False)
-    elif arg == "--mot-de-passe-oublie":
-        forgot_password()
+    elif arg in ("--mot-de-passe-oublie", "--creer-compte"):
+        forgot_password(arg)
     elif arg == "--popup":
         from app import popup, run
         run.log_to_file("fenetre-alerte", run.user_log_dir())

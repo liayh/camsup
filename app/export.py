@@ -109,7 +109,7 @@ def _download(cam: dict, pw: str, start: datetime, end: datetime, dest: Path) ->
     f = lambda d: quote(d.strftime(nvrwatch.FMT))                         # noqa: E731
     url = (f"http://{cam['host']}:{cam['port_http']}/cgi-bin/loadfile.cgi?action=startLoad&channel={cam['channel']}"
            f"&startTime={f(start)}&endTime={f(end)}&subtype=0")
-    with devicehttp.request("GET", url, auth=devicehttp.digest(cam["username"], pw), stream=True, timeout=(10, 60)) as r:
+    with devicehttp.request("GET", url, auth=devicehttp.digest(cam["username"], pw, cam["host"]), stream=True, timeout=(10, 60)) as r:
         if r.status_code == 400:
             raise ExportError("aucun enregistrement sur cette période")
         if r.status_code == 401:
@@ -237,7 +237,8 @@ Période demandée : du {start.strftime(DAY)} au {end.strftime(DAY)} (heure de l
 Motif / référence : {_line(row['reason']) or 'non renseigné'}
 Extrait réalisé le {datetime.now().strftime(DAY)} ({_tz(time.time())}) par « {row['username']} » avec CamSup.
 
-Heure : l'heure incrustée dans l'image est celle du NVR.
+Heure : l'heure incrustée dans l'image est celle du NVR et fait foi : vérifiez qu'elle correspond à la période
+demandée (l'écart d'horloge ci-dessous est celui que le NVR a déclaré au moment de l'extraction).
 {clocks}
 
 Vidéos :

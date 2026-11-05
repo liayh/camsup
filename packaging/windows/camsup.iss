@@ -57,6 +57,7 @@ Name: "{commonstartup}\CamSup"; Filename: "{app}\CamSup.exe"; Parameters: "--pop
 Name: "{group}\CamSup"; Filename: "{app}\CamSup.exe"; WorkingDir: "{app}"
 Name: "{commondesktop}\CamSup"; Filename: "{app}\CamSup.exe"; WorkingDir: "{app}"; Tasks: bureau
 Name: "{group}\CamSup — mot de passe oublié"; Filename: "{app}\CamSup.exe"; Parameters: "--mot-de-passe-oublie"; WorkingDir: "{app}"
+Name: "{group}\CamSup — créer le compte installateur"; Filename: "{app}\CamSup.exe"; Parameters: "--creer-compte"; WorkingDir: "{app}"
 Name: "{group}\Désinstaller CamSup"; Filename: "{uninstallexe}"
 
 [Tasks]
@@ -65,7 +66,10 @@ Name: "bureau"; Description: "Icône sur le bureau"
 [Run]
 ; le serveur est déjà démarré (tâche planifiée) : fenêtre d'alerte de cette session et interface
 Filename: "{app}\CamSup.exe"; Parameters: "--popup"; Description: "Fenêtre d'alerte sur ce poste"; Flags: nowait postinstall
-Filename: "{app}\CamSup.exe"; Description: "Ouvrir CamSup (création de votre compte au premier lancement)"; Flags: nowait postinstall skipifsilent
+; premier compte : créé ici, avec les droits d'administrateur de l'installateur (plus depuis le navigateur, que tout
+; programme du poste peut imiter) ; rien à faire s'il existe déjà
+Filename: "{app}\CamSup.exe"; Parameters: "--creer-compte"; Description: "Créer le compte installateur"; Flags: postinstall skipifsilent runascurrentuser waituntilterminated
+Filename: "{app}\CamSup.exe"; Description: "Ouvrir CamSup"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer-tache.ps1"" -Desinstaller"; Flags: runhidden; RunOnceId: "TacheCamSup"

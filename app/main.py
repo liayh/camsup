@@ -4,13 +4,14 @@ Accès : `accounts.current_user` sur toutes les routes /api. Les ressources d'un
 (cloisonnement entre pharmacies). Les modifications sont tracées dans le journal d'audit.
 """
 import asyncio
+import threading
 import time
 import ipaddress
 import json
 import logging
 import re
 from urllib.parse import urlsplit
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Optional
@@ -112,8 +113,8 @@ class CameraIn(BaseModel):
     brand: Literal["hikvision", "dahua"]
     host: str = Field(min_length=1, max_length=200, pattern=HOST_RE)     # adresse de l'enregistreur
     port_http: int = Field(80, ge=1, le=65535)
-    username: str = ""
-    password: Optional[str] = None          # None = inchangé en modification
+    username: str = Field("", max_length=100)
+    password: Optional[str] = Field(None, max_length=200)   # None = inchangé en modification
     channel: int = Field(1, ge=1, le=256)
     enabled: bool = True
 
@@ -152,7 +153,7 @@ def login(body: LoginIn, request: Request, response: Response):
     if not user:
         raise HTTPException(401, "Identifiant ou mot de passe incorrect")
     token = accounts.open_session(user, ip)
-    response.set_cookie(accounts.COOKIE, token, max_age=config.SESSION_HOURS * 3600, httponly=True,
+    response.set_cookie(accounts.COOKIE, token, httponly=True,
                         samesite="strict", secure=request.url.scheme == "https")
     return user.public()
 
@@ -172,7 +173,8 @@ class SetupIn(BaseModel):
 @public.get("/setup")
 def setup_state():
     """Premier lancement : aucun compte n'existe encore → l'interface propose de créer le sien."""
-    return {"needed": accounts.setup_needed()}
+    needed = accounts.setup_needed()
+    return {"needed": needed} if config.SETUP_WEB else {"needed": needed, "outil": True}
 
 
 @public.post("/setup")
@@ -181,6 +183,9 @@ def setup(body: SetupIn, request: Request, response: Response):
     et seulement depuis ce PC (personne d'autre sur le réseau ne peut le faire à sa place)."""
     if request.headers.get("X-CamSup") != "1":
         raise HTTPException(403, "En-tête X-CamSup manquant")
+    if not config.SETUP_WEB:
+        raise HTTPException(403, "Créez le compte avec « CamSup — créer le compte » (menu Démarrer, droits "
+                                 "d'administrateur du PC)")
     ip = accounts.client_ip(request)
     if ip not in LOOPBACK:
         raise HTTPException(403, "Créez le compte depuis l'ordinateur où CamSup est installé")
@@ -189,7 +194,7 @@ def setup(body: SetupIn, request: Request, response: Response):
     if not user:
         raise HTTPException(409, "Un compte existe déjà : connectez-vous")
     token = accounts.open_session(user, ip)
-    response.set_cookie(accounts.COOKIE, token, max_age=config.SESSION_HOURS * 3600, httponly=True,
+    response.set_cookie(accounts.COOKIE, token, httponly=True,
                         samesite="strict", secure=request.url.scheme == "https")
     return user.public()
 
@@ -479,17 +484,34 @@ def _discover(host: str, port: int, username: str, password: str) -> dict:
     return found
 
 
+_NVR_SLOTS = threading.BoundedSemaphore(4)
+
+
+@contextmanager
+def _nvr_slot():
+    """Recherches synchrones auprès du NVR (jusqu'à 30 s chacune) : 4 à la fois au plus, sinon un seul compte pourrait
+    occuper tous les fils du serveur (un seul worker) et figer l'interface."""
+    if not _NVR_SLOTS.acquire(blocking=False):
+        raise HTTPException(429, "Trop de recherches en cours auprès du NVR : réessayez dans quelques secondes")
+    try:
+        yield
+    finally:
+        _NVR_SLOTS.release()
+
+
 @admin.post("/nvr/discover")
 def discover_nvr(body: NvrIn):
     """Nouvel enregistreur (Dahua) : connexion avec ses identifiants et liste de ses caméras, rien n'est enregistré."""
-    return _discover(body.host.strip(), body.port_http, body.username, body.password)
+    with _nvr_slot():
+        return _discover(body.host.strip(), body.port_http, body.username, body.password)
 
 
 @admin.post("/nvr/rescan")
 def rescan_nvr(body: NvrHost, request: Request):
     """NVR déjà enregistré : liste ses caméras avec les identifiants gardés (nouvelles caméras branchées depuis)."""
     c = _nvr_cams(request.state.user, body.host)[0]
-    found = _discover(c["host"], c["port_http"], c["username"], security.decrypt(c["password_enc"]))
+    with _nvr_slot():
+        found = _discover(c["host"], c["port_http"], c["username"], security.decrypt(c["password_enc"]))
     return {**found, "host": c["host"], "port_http": c["port_http"], "username": c["username"], "site_id": c["site_id"]}
 
 
@@ -580,7 +602,7 @@ async def live_ws(ws: WebSocket, ids: str = ""):
     Compte connecté obligatoire (cookie), même origine seulement (une page d'un autre site ne peut pas l'ouvrir),
     caméras de ses pharmacies seulement."""
     origin = ws.headers.get("origin")
-    if origin and urlsplit(origin).netloc != ws.headers.get("host"):
+    if not origin or urlsplit(origin).netloc != ws.headers.get("host"):     # sans Origin : refusé aussi
         await ws.close(code=1008)
         return
     token = ws.cookies.get(accounts.COOKIE)
@@ -786,7 +808,10 @@ def recordings_days(body: RecordedDaysIn, user: User = Me):
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     start = int((today - timedelta(days=body.days - 1)).timestamp())
     try:
-        found = preview.recorded(cams, start, end)
+        with _nvr_slot():
+            found = preview.recorded(cams, start, end)
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"NVR : {nvrwatch.reason(e)}")
     return {"start_ts": start, "end_ts": end, "cameras": {str(k): v for k, v in found.items()}}
@@ -801,7 +826,10 @@ def recordings(body: RecordedIn, user: User = Me):
     if not 0 < body.end_ts - body.start_ts <= 31 * 3600:      # la journée + une tranche qui passe minuit
         raise HTTPException(400, "Période invalide")
     try:
-        found = preview.recorded(cams, body.start_ts, body.end_ts)
+        with _nvr_slot():
+            found = preview.recorded(cams, body.start_ts, body.end_ts)
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"NVR : {nvrwatch.reason(e)}")
     return {str(k): v for k, v in found.items()}
