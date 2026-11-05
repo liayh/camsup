@@ -97,6 +97,7 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   (`smart_raw`), heures sur 32 bits (`power_on_hours`) ; bouton « Diagnostic des disques » (`/nvr/disks/diagnostic`,
   réponses brutes du NVR) : fenêtre en clair (`storage.diagnostic_summary` : capacité, partitions, compteurs SMART nommés et jugés, avertissement au-delà de 5 ans) + fichier technique (`?fichier=1`). Diagnostic réel reçu le 04/11/2026 : 1 disque `/dev/sda` de 4 To en 4 partitions de 996 Go, pleines (normal).
   Interface : `ErrorBoundary` (plus de page blanche).
+- Rôle intégrateur réservé à l'installateur (05/11/2026) : seul le premier compte (`/api/setup` ou `ADMIN_PASSWORD`) l'a ; `POST /users` en intégrateur → 403, un pharmacien ne peut pas être promu (`PUT /users`) ; formulaire : rôle affiché, pas de choix.
 - `accounts.py` : rôles `integrator` / `pharmacist`, sessions cookie, verrouillage 5 échecs/15 min, CSRF par en-tête
   `X-CamSup: 1`, journal `audit`. Routeurs `main.py` : `public`, `router` (connecté), `admin` (intégrateur).
   Toute route liée à un site passe par `_cam()` / `require_site()` / `site_filter()` (404 hors périmètre).

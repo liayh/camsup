@@ -260,6 +260,10 @@ def list_users():
 
 @admin.post("/users")
 def create_user(u: UserIn, request: Request):
+    if u.role == "integrator":
+        # 05/11/2026 : le rôle intégrateur est réservé à l'installateur (compte créé à l'installation) ; les comptes
+        # créés ensuite (pharmaciens, employés) ne peuvent jamais l'avoir
+        raise HTTPException(403, "Le rôle intégrateur est réservé à l'installateur : créez un compte pharmacien")
     if not u.password:
         raise HTTPException(400, "Mot de passe requis")
     accounts.check_password_strength(u.password)
@@ -275,8 +279,11 @@ def create_user(u: UserIn, request: Request):
 @admin.put("/users/{uid}")
 def update_user(uid: int, u: UserIn, request: Request):
     me_ = request.state.user
-    if not db.one("SELECT id FROM users WHERE id=?", (uid,)):
+    target = db.one("SELECT id, role FROM users WHERE id=?", (uid,))
+    if not target:
         raise HTTPException(404, "Compte introuvable")
+    if u.role == "integrator" and target["role"] != "integrator":
+        raise HTTPException(403, "Le rôle intégrateur est réservé à l'installateur : un pharmacien ne peut pas le recevoir")
     if uid == me_.id and (u.role != "integrator" or not u.active):
         raise HTTPException(400, "Vous ne pouvez pas retirer vos propres droits")
     if db.one("SELECT id FROM users WHERE username=? AND id<>?", (u.username, uid)):

@@ -416,3 +416,19 @@ def test_alertes_retablies_effacees_apres_une_semaine(env):
     assert config.ALERT_RETENTION_DAYS == 7
     monitor.purge()
     assert {r["key"] for r in db.q("SELECT key FROM alerts")} == {"recente", "en_cours"}
+
+
+def test_role_integrateur_reserve_a_l_installateur(env):
+    """Aucun compte créé ensuite ne peut être intégrateur ; un pharmacien ne peut pas le devenir."""
+    from app import config, security
+    c = client(config.ADMIN_USER, security.ADMIN_PASSWORD)
+    r = c.post("/api/users", json={"username": "employe", "role": "integrator", "password": "un-mot-de-passe-long"}, headers=H)
+    assert r.status_code == 403
+    uid = db.one("SELECT id FROM users WHERE username='pharma'")["id"]
+    r = c.put(f"/api/users/{uid}", json={"username": "pharma", "role": "integrator", "site_ids": []}, headers=H)
+    assert r.status_code == 403
+    assert db.one("SELECT role FROM users WHERE id=?", (uid,))["role"] == "pharmacist"
+    me = db.one("SELECT id FROM users WHERE username=?", (config.ADMIN_USER,))["id"]       # l'installateur garde le sien
+    assert c.put(f"/api/users/{me}", json={"username": config.ADMIN_USER, "role": "integrator"}, headers=H).status_code == 200
+    p = client("pharma", "motdepasse-pharma")                                              # un pharmacien : 403 partout
+    assert p.post("/api/users", json={"username": "x2", "role": "pharmacist", "password": "un-mot-de-passe-long"}, headers=H).status_code == 403

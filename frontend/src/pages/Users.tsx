@@ -9,7 +9,7 @@ import { useApi } from "../hooks/useApi";
 
 function UserForm({ user, sites, onDone }: { user: UserRow | null; sites: Site[]; onDone: () => void }) {
   const run = useAction();
-  const [role, setRole] = useState<Role>(user?.role ?? "pharmacist");
+  const role: Role = user?.role === "integrator" ? "integrator" : "pharmacist";
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -24,9 +24,9 @@ function UserForm({ user, sites, onDone }: { user: UserRow | null; sites: Site[]
   return (
     <form className="form grid-form" onSubmit={submit}>
       <label>Utilisateur<input name="username" required pattern="[A-Za-z0-9_.@\-]+" defaultValue={user?.username} autoComplete="off" /></label>
-      <label>Rôle<select value={role} onChange={(e) => setRole(e.target.value as Role)}>
-        <option value="pharmacist">Pharmacien (ses sites, consultation)</option>
-        <option value="integrator">Intégrateur (tout, configuration)</option></select></label>
+      {/* rôle intégrateur réservé à l'installateur (compte créé à l'installation) : jamais attribuable ici */}
+      <label>Rôle<input readOnly tabIndex={-1} value={role === "integrator" ? "Intégrateur (installateur : tout, configuration)"
+        : "Pharmacien (ses sites, consultation)"} /></label>
       <label>Mot de passe<input name="password" type="password" minLength={10} autoComplete="new-password" placeholder={user ? "inchangé si vide" : "10 caractères minimum"} /></label>
       <label className="check"><input type="checkbox" name="active" defaultChecked={user ? !!user.active : true} /> Compte actif</label>
       {role === "pharmacist" && <fieldset className="span2"><legend>Sites accessibles</legend>
