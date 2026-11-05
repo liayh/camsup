@@ -112,16 +112,18 @@ export default function Dashboard() {
       {admin && <div className="row dash-toolbar">{ca.toolbar}</div>}
       {!d.email && admin && <Notice tone="warn">E-mail non configuré : les alertes ne s’affichent que sur ce poste (voir Paramètres).</Notice>}
       <section className="dash-band">
-        <div className={`dash-state tone-${state.tone}`}>
+        <Link to="/alertes" className={`dash-state dash-state-link tone-${state.tone}`}
+              title={problems ? `Voir les ${problems} alerte(s) en cours` : "Voir les alertes"}>
           <div className="dash-site">SITE · {name.toUpperCase()}</div>
           <div className="dash-state-label">{state.label}</div>
           <div className="dash-state-text">
             {state.tone === "bad" ? <>Le NVR ne répond plus{nvrAlert ? <> depuis <b className="mono">{ago(nvrAlert.opened_ts)}</b></> : null}. Éteint, câble ou réseau coupé ?</>
-              : state.tone === "warn" ? <>{problems} problème{problems > 1 ? "s" : ""} en cours : voir les alertes.</>
+              : state.tone === "warn" ? <>{problems} problème{problems > 1 ? "s" : ""} en cours : <u>voir les alertes ›</u></>
               : state.tone === "ok" ? <>Toutes les caméras sont vues par le NVR et enregistrent.</>
               : <>Premier relevé du NVR en cours.</>}
           </div>
-        </div>
+          {problems > 0 && state.tone !== "warn" && <div className="dash-state-more">{problems} alerte{problems > 1 ? "s" : ""} en cours ›</div>}
+        </Link>
         <div className="dash-counters">
           <div className="dash-counter"><div className={`dash-num ${seen < cams.length ? "bad" : ""}`}>{seen}<span>/{cams.length}</span></div><div className="dash-cap">vues par le NVR</div></div>
           <div className="dash-counter"><div className={`dash-num ${offline ? "bad" : ""}`}>{offline}</div><div className="dash-cap">déconnectées</div></div>

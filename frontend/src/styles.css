@@ -229,3 +229,7 @@ legend { color: var(--mut); font-size: 12px; }
 .wtile-playing.tone-ok .wtile-badge { color: #fff; background: #C62828; }
 .live-zoom { width: 100%; max-height: 75vh; object-fit: contain; background: #000; border-radius: 6px; display: block; }
 .wtile-playing .wtile-actions .btn { background: rgba(14, 17, 22, .78); }
+.dash-state-link { text-decoration: none; color: inherit; cursor: pointer; transition: filter .15s; }
+.dash-state-link:hover { filter: brightness(1.25); color: inherit; }
+.dash-state-link:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
+.dash-state-more { font-size: 13px; color: var(--t); text-decoration: underline; }
