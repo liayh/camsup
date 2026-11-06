@@ -204,15 +204,24 @@ def _record(ok: bool, error: str = "") -> None:
     db.set_setting("email_status", json.dumps({"ts": db.now(), "ok": ok, "error": error[:300]}))
 
 
-def send_later(text: str) -> None:
-    """Alerte par e-mail, en arrière-plan ; le résultat est gardé pour Paramètres."""
+def send_later(text: str, on_done=None) -> bool:
+    """Alerte par e-mail, en arrière-plan ; le résultat est gardé pour Paramètres. `on_done(parti: bool)` : appelé
+    après l'essai. False (rien n'est tenté) si l'e-mail n'est pas configuré : l'alerte sera renvoyée plus tard."""
     def job():
+        ok = False
         try:
             send(f"[CamSup] {text}", f"{text}\n\nRelevé du {time.strftime('%d/%m/%Y à %H:%M')} (heure du poste CamSup).\n")
             _record(True)
+            ok = True
         except Exception as e:  # noqa: BLE001
             msg = security.scrub(str(e))
             log.warning("E-mail en échec : %s", msg)
             _record(False, msg)
-    if configured():
-        _pool.submit(job)
+        finally:
+            if on_done:
+                on_done(ok)
+    if not configured():
+        log.warning("E-mail non envoyé (compte d'envoi non configuré dans Paramètres) : %s", text)
+        return False
+    _pool.submit(job)
+    return True

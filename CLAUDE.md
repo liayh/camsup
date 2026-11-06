@@ -67,7 +67,12 @@ Matériel réel : NVR Dahua 192.168.1.160, 7 caméras (canaux 1–7) ; port 80 d
   Équipements regroupés par `cameras.device_key()` (le jeton Fernet diffère par caméra : ne pas grouper par `password_enc`).
 - Alertes rétablies effacées 7 jours après leur fin (`ALERT_RETENTION_DAYS`, purge horaire de `monitor`, 05/11/2026) ; en cours : jamais.
 - `alerting.py` : `raise_alert(key, …)` / `clear_alert(key)` dédupliquées par clé ; e-mail seulement pour
-  `config.EMAIL_KINDS` (`nvr`, `camera`, `rec`, `hdd`), webhook pour tout ; envois en arrière-plan.
+  `config.EMAIL_KINDS` (`nvr`, `camera`, `rec`, `hdd`, `licence`), webhook pour tout ; envois en arrière-plan.
+  **06/11/2026 (NVR éteint toute une nuit, aucun e-mail)** : avant, un seul essai, et rien du tout si l'e-mail n'était
+  pas configuré au moment de l'alerte (alerte ouverte = dédupliquée, jamais renvoyée). Maintenant `alerts.emailed_ts`
+  = e-mail parti ; `alerting.resend()` renvoie les alertes ouvertes non parties toutes les 5 min (`monitor`) et dès
+  l'enregistrement des réglages e-mail ; « Rétabli » envoyé seulement si l'alerte est partie. Bandeau rouge de
+  l'installateur (`Layout` `EmailBanner`) : compte d'envoi absent, dernier envoi en échec, alertes en attente.
 - E-mail (05/11/2026) : **seule destinataire camsupalerte@gmail.com** (`config.ALERT_EMAIL_ALWAYS`, `mail.all_recipients` ; adresses saisies autrefois ignorées, champ retiré) ; l'utilisateur saisit seulement le compte qui **envoie** (adresse + mot de passe). E-mails : perte du NVR, caméra(s) déconnectée(s), enregistrement arrêté, santé du disque (`EMAIL_KINDS` = nvr, camera, rec, hdd). Il faut toujours un compte d'envoi (adresse + mot de passe d'application) : **ne jamais mettre `email.env` dans un installateur publié** (le lien GitHub est public).
 - `mail.py` : réglages e-mail saisis dans Paramètres (`settings.email`, JSON, mot de passe chiffré ; sinon `SMTP_*` du
   .env), plusieurs destinataires, STARTTLS / SSL / aucune, résultat du dernier envoi (`settings.email_status`).

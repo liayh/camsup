@@ -11,6 +11,10 @@ NOW = "2026-10-30 10:00:00"
 def env(monkeypatch):
     sent = []
     monkeypatch.setattr(alerting, "notify", lambda text, email=True: sent.append((text, email)))
+    def email(aid, message):                                       # e-mail d'alerte, parti
+        sent.append((message, True))
+        db.x("UPDATE alerts SET emailed_ts=? WHERE id=?", (db.now(), aid))
+    monkeypatch.setattr(alerting, "_email", email)
     db.init()
     for t in ("alerts", "smart_baseline", "status", "cameras", "sites"):
         db.x(f"DELETE FROM {t}")

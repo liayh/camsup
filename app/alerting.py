@@ -1,6 +1,7 @@
 """Alertes : ouverture/fermeture dédupliquées + notifications (webhook, e-mail), envoyées en arrière-plan."""
 import json
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -29,10 +30,42 @@ def notify(text: str, email: bool = True) -> None:
 def raise_alert(key: str, camera_id: int | None, kind: str, message: str) -> None:
     if db.one("SELECT id FROM alerts WHERE key=? AND closed_ts IS NULL", (key,)):
         return
-    db.x("INSERT INTO alerts(key,camera_id,kind,message,opened_ts) VALUES(?,?,?,?,?)",
+    aid = db.x("INSERT INTO alerts(key,camera_id,kind,message,opened_ts) VALUES(?,?,?,?,?)",
                (key, camera_id, kind, message, db.now()))
     log.warning("ALERTE %s", message)
-    notify(f"🔴 {message}", kind in config.EMAIL_KINDS)
+    notify(f"🔴 {message}", False)                  # webhook
+    if kind in config.EMAIL_KINDS:
+        _email(aid, message)
+
+
+_sending: set[int] = set()                         # alertes dont l'e-mail est en cours d'envoi
+_send_lock = threading.Lock()
+
+
+def _email(aid: int, message: str) -> None:
+    """E-mail d'une alerte ; noté envoyé (`emailed_ts`) seulement s'il est parti, sinon renvoyé par `resend`."""
+    with _send_lock:
+        if aid in _sending:
+            return
+        _sending.add(aid)
+
+    def done(ok: bool) -> None:
+        if ok:
+            db.x("UPDATE alerts SET emailed_ts=? WHERE id=?", (db.now(), aid))
+        with _send_lock:
+            _sending.discard(aid)
+    if not mail.send_later(f"🔴 {message}", on_done=done):
+        done(False)
+
+
+def resend() -> None:
+    """Alertes encore ouvertes dont l'e-mail n'est pas parti (e-mail configuré après coup, serveur d'envoi ou
+    internet en panne au moment de l'alerte) : nouvel essai (appelé par la surveillance toutes les 5 min).
+    Avant le 06/11/2026, un seul essai : un NVR éteint pendant une panne d'envoi ne prévenait jamais personne."""
+    kinds = config.EMAIL_KINDS
+    for a in db.q(f"SELECT id, message FROM alerts WHERE closed_ts IS NULL AND emailed_ts IS NULL "
+                  f"AND kind IN ({','.join('?' * len(kinds))}) ORDER BY id", kinds):
+        _email(a["id"], a["message"])
 
 
 def popup_state() -> dict:
@@ -46,8 +79,9 @@ def popup_state() -> dict:
 
 
 def clear_alert(key: str) -> None:
-    row = db.one("SELECT id, kind, message FROM alerts WHERE key=? AND closed_ts IS NULL", (key,))
+    row = db.one("SELECT id, kind, message, emailed_ts FROM alerts WHERE key=? AND closed_ts IS NULL", (key,))
     if not row:
         return
     db.x("UPDATE alerts SET closed_ts=? WHERE key=? AND closed_ts IS NULL", (db.now(), key))
-    notify(f"🟢 Rétabli : {row['message']}", row["kind"] in config.EMAIL_KINDS)
+    # « rétabli » par e-mail seulement si l'alerte elle-même est partie (sinon message sans contexte)
+    notify(f"🟢 Rétabli : {row['message']}", row["kind"] in config.EMAIL_KINDS and row["emailed_ts"] is not None)

@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS alerts(
   kind TEXT NOT NULL,
   message TEXT NOT NULL,
   opened_ts INTEGER NOT NULL,
-  closed_ts INTEGER
+  closed_ts INTEGER,
+  emailed_ts INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_alert_key ON alerts(key, closed_ts);
 CREATE TABLE IF NOT EXISTS users(
@@ -120,6 +121,9 @@ def init() -> None:
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.executescript(SCHEMA)
         _drop_obsolete()
+        if "emailed_ts" not in {r[1] for r in _conn.execute("PRAGMA table_info(alerts)")}:
+            # 06/11/2026 : e-mail d'alerte parti (sinon renvoyé par la surveillance tant que l'alerte est ouverte)
+            _conn.execute("ALTER TABLE alerts ADD COLUMN emailed_ts INTEGER")
         _conn.execute("UPDATE users SET role='pharmacist' WHERE role NOT IN ('integrator','pharmacist')")
         _conn.commit()
 

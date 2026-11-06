@@ -360,6 +360,10 @@ def overview(user: User = Me):
         "nvr": [n if user.is_integrator else {k: v for k, v in n.items() if k != "detail"}
                 for n in nvrwatch.snapshot() if user.can_site(n["site_id"])],
         "email": mail.configured(),
+        # alertes en cours qui ne sont pas parties par e-mail (bandeau de l'installateur) et dernier envoi
+        "email_unsent": db.one("SELECT COUNT(*) n FROM alerts WHERE closed_ts IS NULL AND emailed_ts IS NULL AND kind IN "
+                               f"({','.join('?' * len(config.EMAIL_KINDS))})", config.EMAIL_KINDS)["n"],
+        "email_status": json.loads(db.setting("email_status") or "null"),
         "export_max_minutes": config.EXPORT_MAX_MINUTES,
         "config_saved": ({r["key"].split(":", 1)[1]: int(r["value"]) for r in
                           db.q("SELECT key, value FROM settings WHERE key LIKE 'nvr_config:%'")} if user.is_integrator else {}),
@@ -949,6 +953,7 @@ def put_email(body: EmailIn, request: Request):
         # le mot de passe enregistré n'est envoyé qu'au serveur d'e-mail pour lequel il a été saisi
         raise HTTPException(400, "Serveur, port, sécurité ou identifiant changés : ressaisir le mot de passe")
     mail.save(body.host, body.port, body.security, body.user, body.password, body.sender, to)
+    alerting.resend()                          # alertes en cours jamais parties par e-mail : envoyées maintenant
     accounts.audit_req(request, "email.reglages", detail=f"{body.host}:{body.port} {body.security} → {', '.join(to)}"
                        + (", mot de passe changé" if body.password is not None else ""))
     return mail.public(mail.current())

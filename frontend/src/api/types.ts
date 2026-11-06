@@ -27,7 +27,7 @@ export interface Alert { id: number; key: string; camera_id: number | null; site
 
 export interface Overview {
   me: Me; sites: Site[]; cameras: Camera[]; alerts: Alert[];
-  recorders: RecorderHealth[]; nvr: NvrWatch[]; email: boolean; export_max_minutes: number; licence?: Licence; config_saved: Record<string, number>; now: number;
+  recorders: RecorderHealth[]; nvr: NvrWatch[]; email: boolean; email_unsent?: number; email_status?: { ts: number; ok: boolean; error: string } | null; export_max_minutes: number; licence?: Licence; config_saved: Record<string, number>; now: number;
 }
 
 export interface CameraTest { ok: boolean; error?: string; nvr_time?: string; state?: string; last_record?: string | null; disks?: number }

@@ -59,13 +59,20 @@ def purge() -> None:
     preview.purge()
 
 
+RESEND_SECONDS = 300
+
+
 def _loop() -> None:
     last_nvr = last_hdd = last_purge = 0.0
+    last_mail = time.time()
     while not _stop.is_set():
         try:
             cams = db.q("SELECT * FROM cameras WHERE enabled=1")
             now = time.time()
             db.set_setting("heartbeat", str(int(now)))   # surveillé par la fenêtre d'alerte (serveur figé/arrêté)
+            if now - last_mail > RESEND_SECONDS:
+                alerting.resend()                      # e-mails d'alerte pas encore partis : nouvel essai
+                last_mail = now
             if not licence.active():
                 # licence expirée (ou absente) : plus de relevés (informations figées), direct coupé ; seule l'alerte
                 # « licence » reste (fenêtre d'alerte + e-mail au vendeur)

@@ -58,6 +58,25 @@ function LicenceBanner() {
   );
 }
 
+/** Bandeau de l'installateur : les alertes ne partent pas par e-mail (compte d'envoi absent ou envoi en échec). */
+function EmailBanner() {
+  const { ov } = useSite();
+  if (!ov || ov.me.role !== "integrator") return null;
+  const failed = ov.email_status && !ov.email_status.ok;
+  const unsent = ov.email_unsent ?? 0;
+  if (ov.email && !failed && !unsent) return null;
+  return (
+    <div className="licence-banner bad" role="alert">
+      <b>Les alertes ne partent pas par e-mail</b>
+      {!ov.email ? " : compte d’envoi non configuré."
+        : failed ? ` : dernier envoi en échec (${ov.email_status!.error}).`
+        : " : envoi en cours ou en échec."}
+      {unsent > 0 && ` ${unsent} alerte${unsent > 1 ? "s" : ""} en attente (nouvel essai toutes les 5 min).`}
+      {" "}<Link to="/parametres">Régler l’e-mail</Link>
+    </div>
+  );
+}
+
 function Frame() {
   const { me, logout } = useAuth();
   const [filter, setFilter] = useState("");
@@ -78,6 +97,7 @@ function Frame() {
         <button className="btn small" onClick={logout}>Déconnexion</button>
       </header>
       <LicenceBanner />
+      <EmailBanner />
       <div className="body">
         <Sites filter={filter} />
         <main className="content"><Outlet /></main>
